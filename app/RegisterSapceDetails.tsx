@@ -2,27 +2,31 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import * as Location from "expo-location"; // ⬅️ NEW
+import * as Location from "expo-location";
 import { Stack, router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Linking,
-    Platform,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 type DaySlot = { day: string; enabled: boolean; startTime: string; endTime: string };
-const STORAGE_KEY = "pm_timeSlots";
+type PricingUnit = "hour" | "day";
+type VehicleType = "Cars" | "Vans" | "Bikes" | "Buses";
+
+const STORAGE_KEY = "pm_timeSlots";       // temp availability handoff from SetTimeSlots
+const DRAFT_KEY = "pm_space_draft";       // draft autosave key
 
 const to12h = (t: string) => {
   if (!t) return "--:--";
@@ -32,32 +36,33 @@ const to12h = (t: string) => {
   return `${hr}:${String(m).padStart(2, "0")} ${am ? "AM" : "PM"}`;
 };
 
-type PricingUnit = "hour" | "day";
-type VehicleType = "Cars" | "Vans" | "Bikes" | "Buses";
-
 export default function RegisterSpace2() {
+  // form state
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
 
   // refs to force focus when tapping container
   const nameRef = useRef<TextInput>(null);
 
-  // Location (read-only label + coords)
+  // location
   const [locationLabel, setLocationLabel] = useState("");
   const [lat, setLat] = useState<number | null>(null);
   const [lon, setLon] = useState<number | null>(null);
 
-  // Input focus styling
+  // UI focus
   const [focusName, setFocusName] = useState(false);
   const [focusAddress, setFocusAddress] = useState(false);
 
-  // Pricing (Free / Per hour / Per day)
+  // save debounce timer
+  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // pricing
   const [pricing, setPricing] = useState("");
   const [isFree, setIsFree] = useState(false);
   const [pricingAmount, setPricingAmount] = useState<string>("");
   const [pricingUnit, setPricingUnit] = useState<PricingUnit>("hour");
 
-  // Vehicle categories (with counts) + collapse
+  // vehicles
   const [showCategory, setShowCategory] = useState(false);
   const [vehicleCounts, setVehicleCounts] = useState<Record<VehicleType, number>>({
     Cars: 0,
@@ -67,18 +72,26 @@ export default function RegisterSpace2() {
   });
   const prevCountsRef = useRef(vehicleCounts);
 
-  // Description & terms
+  // misc
   const [description, setDescription] = useState("");
   const [agree, setAgree] = useState(false);
 
-  // verify / locate state
+  // verify / locate
   const [verifying, setVerifying] = useState(false);
   const [verifiedOnce, setVerifiedOnce] = useState(false);
-  const [locating, setLocating] = useState(false); // ⬅️ NEW
+  const [locating, setLocating] = useState(false);
 
-  // time slots (for nice chips)
+  // availability chips
   const [enabledSlots, setEnabledSlots] = useState<DaySlot[]>([]);
 
+  // API
+  const API_BASE = "http://192.168.8.131/Parkmate"; // ← your LAN/XAMPP path
+  const SAVE_ENDPOINT = `${API_BASE}/save_space_details.php`;
+  const LINK_ENDPOINT = `${API_BASE}/link_agreement_to_owner_space.php`;
+
+  const [submitting, setSubmitting] = useState(false);
+
+  // Read temp availability from SetTimeSlots, then CLEAR it so it doesn't stick forever
   useFocusEffect(
     React.useCallback(() => {
       let mounted = true;
@@ -88,108 +101,175 @@ export default function RegisterSpace2() {
           if (!mounted) return;
           if (raw) {
             const slots = JSON.parse(raw) as DaySlot[];
-            const enabled = (slots || []).filter((d) => d.enabled && d.startTime && d.endTime);
+            const enabled = (slots || []).filter(d => d.enabled && d.startTime && d.endTime);
             setEnabledSlots(enabled);
-          } else {
-            setEnabledSlots([]);
+            // important: clear temp so it only shows once after you set it
+            await AsyncStorage.removeItem(STORAGE_KEY);
           }
         } catch {
-          setEnabledSlots([]);
+          // ignore, leave whatever was already in state
         }
       })();
-      return () => {
-        mounted = false;
-      };
+      return () => { mounted = false; };
     }, [])
   );
 
-  /** ===== API CONFIG (CHANGE ONLY THE IP) ===== */
-const API_BASE = "http://192.168.8.131/Parkmate"; // ← your LAN/XAMPP path
-const SAVE_ENDPOINT = `${API_BASE}/save_space_details.php`;
+  // Load draft once on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(DRAFT_KEY);
+        if (!raw) return;
+        const d = JSON.parse(raw);
+        setName(d.name ?? "");
+        setAddress(d.address ?? "");
+        setLocationLabel(d.location_label ?? "");
+        setLat(typeof d.lat === "number" ? d.lat : null);
+        setLon(typeof d.lon === "number" ? d.lon : null);
+        setIsFree(!!d.is_free);
+        setPricingAmount(d.pricingAmount ?? "");
+        setPricingUnit(d.pricingUnit === "day" ? "day" : "hour");
+        setVehicleCounts(d.vehicle_counts ?? { Cars: 0, Vans: 0, Bikes: 0, Buses: 0 });
+        setEnabledSlots(Array.isArray(d.enabledSlots) ? d.enabledSlots : []);
+        setVerifiedOnce(!!(d.location_label || (typeof d.lat === "number" && typeof d.lon === "number")));
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
 
-const [submitting, setSubmitting] = useState(false);
+  // Autosave draft with a tiny debounce
+  useEffect(() => {
+    const draft = {
+      name,
+      address,
+      location_label: locationLabel,
+      lat,
+      lon,
+      is_free: isFree ? 1 : 0,
+      pricingAmount,
+      pricingUnit,
+      vehicle_counts: vehicleCounts,
+      enabledSlots,
+    };
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(draft)).catch(() => {});
+    }, 250);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [
+    name, address, locationLabel, lat, lon,
+    isFree, pricingAmount, pricingUnit,
+    vehicleCounts, enabledSlots
+  ]);
 
-
-  // Derive pricing text
+  // derive pricing preview
   useEffect(() => {
     if (isFree) setPricing("Free");
     else if (pricingAmount) setPricing(`Rs ${pricingAmount} / ${pricingUnit}`);
     else setPricing("");
   }, [isFree, pricingAmount, pricingUnit]);
 
-const onSubmit = async () => {
-  if (!agree) {
-    Alert.alert("Please agree", "You must accept the terms before submitting.");
-    return;
-  }
-  if (!name.trim()) {
-    Alert.alert("Missing", "Enter the parking space name.");
-    return;
-  }
-  if (!address.trim()) {
-    Alert.alert("Missing", "Enter the exact address.");
-    return;
-  }
-
-  // Build availability payload (enabled slots only)
-  const availability = enabledSlots.map((d) => ({
-    day: d.day,
-    start: d.startTime,
-    end: d.endTime,
-  }));
-
-  const price_amount = isFree ? null : (pricingAmount ? parseInt(pricingAmount, 10) : null);
-  const price_unit: PricingUnit | null = isFree ? null : pricingUnit;
-  const pricing_text = isFree
-    ? "Free"
-    : price_amount != null
-      ? `Rs ${price_amount} / ${price_unit}`
-      : null;
-
-  const payload = {
-    name: name.trim(),
-    address: address.trim(),
-    location_label: locationLabel || null,
-    // send as strings so PHP can NULLIF('', '') → NULL for empty coords
-    latitude: lat != null ? String(lat) : "",
-    longitude: lon != null ? String(lon) : "",
-
-    availability,                 // array → PHP json_encode
-    vehicle_counts: vehicleCounts, // object → PHP json_encode
-
-    is_free: isFree ? 1 : 0,
-    price_amount,
-    price_unit,
-    pricing_text,
-  };
-
-  try {
-    setSubmitting(true);
-    const res = await fetch(SAVE_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const json = await res.json();
-    if (json?.success) {
-      Alert.alert("Saved ✅", `Space saved (ID: ${json.id}).`);
-      // Optional: clear local time-slots if you want
-      // await AsyncStorage.removeItem(STORAGE_KEY);
-      // router.push("/AfterSubmitting");
-    } else {
-      Alert.alert("Save failed", json?.message || "Unknown error from server.");
+  const onSubmit = async () => {
+    if (!agree) {
+      Alert.alert("Please agree", "You must accept the terms before submitting.");
+      return;
     }
-  } catch (e) {
-    Alert.alert(
-      "Network error",
-      "Could not reach the server. Check your IP (API_BASE) and XAMPP."
-    );
-  } finally {
-    setSubmitting(false);
-  }
-};
+    if (!name.trim()) {
+      Alert.alert("Missing", "Enter the parking space name.");
+      return;
+    }
+    if (!address.trim()) {
+      Alert.alert("Missing", "Enter the exact address.");
+      return;
+    }
 
+    // Build availability payload (enabled slots only)
+    const availability = enabledSlots.map((d) => ({
+      day: d.day,
+      start: d.startTime,
+      end: d.endTime,
+    }));
+
+    const price_amount = isFree ? null : (pricingAmount ? parseInt(pricingAmount, 10) : null);
+    const price_unit: PricingUnit | null = isFree ? null : pricingUnit;
+    const pricing_text = isFree
+      ? "Free"
+      : price_amount != null
+        ? `Rs ${price_amount} / ${price_unit}`
+        : null;
+
+    const payload = {
+      name: name.trim(),
+      address: address.trim(),
+      location_label: locationLabel || null,
+      // send as strings so PHP can NULLIF('', '') → NULL for empty coords
+      latitude: lat != null ? String(lat) : "",
+      longitude: lon != null ? String(lon) : "",
+
+      availability,                  // array → PHP json_encode
+      vehicle_counts: vehicleCounts, // object → PHP json_encode
+
+      is_free: isFree ? 1 : 0,
+      price_amount,
+      price_unit,
+      pricing_text,
+    };
+
+    try {
+      setSubmitting(true);
+      const res = await fetch(SAVE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json(); // ← you were missing this line
+      if (json?.success) {
+        const spaceId = String(json.id);
+
+        // remember space id if you like (used by ParkingAgreementScreen)
+        await AsyncStorage.setItem("pm_last_space_id", spaceId);
+
+        // link any pending agreement (created earlier before owner/space)
+        const pending = await AsyncStorage.getItem("pm_pending_agreement_id");
+        if (pending) {
+          try {
+            await fetch(LINK_ENDPOINT, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                agreement_id: Number(pending),
+                space_id: Number(spaceId),
+              }),
+            });
+          } catch {
+            // ignore link errors; not fatal for space creation
+          }
+          // clear regardless
+          await AsyncStorage.removeItem("pm_pending_agreement_id");
+        }
+
+        // clear draft + temp time-slots so the next open is fresh
+        await AsyncStorage.multiRemove([DRAFT_KEY, STORAGE_KEY]);
+
+        // go to next page
+        router.replace({ pathname: "/AfterSubmitting", params: { space_id: spaceId } });
+        return;
+      }
+
+      Alert.alert("Save failed", json?.message || "Unknown error from server.");
+    } catch (e) {
+      Alert.alert(
+        "Network error",
+        "Could not reach the server. Check your IP (API_BASE) and XAMPP."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const verifyAddress = async () => {
     const q = address.trim();
@@ -227,7 +307,6 @@ const onSubmit = async () => {
     }
   };
 
-  // ⬅️ NEW: set location from coordinates (reverse-geocode for a label)
   const setFromCoords = async (latNum: number, lonNum: number) => {
     try {
       const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latNum}&lon=${lonNum}`;
@@ -249,7 +328,6 @@ const onSubmit = async () => {
     }
   };
 
-  // ⬅️ NEW: auto-detect my location
   const useMyLocation = async () => {
     try {
       setLocating(true);
@@ -287,14 +365,14 @@ const onSubmit = async () => {
     }
   };
 
-  // Pricing helpers
+  // pricing helpers
   const addStep = (step: number) => {
     const n = Number(pricingAmount || 0) + step;
     setPricingAmount(String(Math.max(0, Math.floor(n))));
   };
   const onChangeAmount = (txt: string) => setPricingAmount(txt.replace(/[^\d]/g, ""));
 
-  // Vehicle Category helpers
+  // vehicle helpers
   const selectedVehicles = () =>
     (["Cars", "Vans", "Bikes", "Buses"] as const)
       .map((k) => ({ k, v: vehicleCounts[k] || 0 }))
@@ -329,7 +407,7 @@ const onSubmit = async () => {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* ===== Pretty: Parking Space Name ===== */}
+        {/* Space Name */}
         <View style={styles.fieldCard}>
           <View style={styles.labelRow}>
             <Ionicons name="home-outline" size={16} color={palette.primary} />
@@ -355,7 +433,7 @@ const onSubmit = async () => {
           </Pressable>
         </View>
 
-        {/* ===== Pretty: Exact Address + Verify (inline) ===== */}
+        {/* Address + Verify */}
         <View style={styles.fieldCard}>
           <View style={styles.labelRow}>
             <Ionicons name="location-outline" size={16} color={palette.primary} />
@@ -404,7 +482,7 @@ const onSubmit = async () => {
           </Text>
         </View>
 
-        {/* ===== Pretty: Location (tap to open Maps) ===== */}
+        {/* Location */}
         <View style={styles.fieldCard}>
           <View style={styles.labelRow}>
             <Ionicons name="map-outline" size={16} color={palette.primary} />
@@ -444,7 +522,7 @@ const onSubmit = async () => {
             />
           </TouchableOpacity>
 
-          {/* NEW: Use my location */}
+          {/* Use my location */}
           <View style={styles.locateRow}>
             <TouchableOpacity
               style={styles.locateBtn}
@@ -473,7 +551,7 @@ const onSubmit = async () => {
           </Text>
         </View>
 
-        {/* ===== Availability (chips) ===== */}
+        {/* Availability */}
         <TouchableOpacity
           style={styles.availabilityCard}
           activeOpacity={0.9}
@@ -506,7 +584,7 @@ const onSubmit = async () => {
           )}
         </TouchableOpacity>
 
-        {/* ===== Pricing (Free / Per hour / Per day) ===== */}
+        {/* Pricing */}
         <View style={styles.pricingCard}>
           <Text style={styles.sectionTitle}>Pricing</Text>
 
@@ -576,7 +654,7 @@ const onSubmit = async () => {
           </Text>
         </View>
 
-        {/* ===== Vehicle Categories with counts (summary + Save/Cancel) ===== */}
+        {/* Vehicle Categories */}
         <View style={styles.catCard}>
           <TouchableOpacity
             style={styles.categoryHeader}
@@ -671,8 +749,6 @@ const onSubmit = async () => {
           )}
         </View>
 
-        
-
         {/* Legal docs */}
         <View style={styles.legalRow}>
           <Text style={styles.legalLabel}>Legal Documentation Upload :</Text>
@@ -699,18 +775,18 @@ const onSubmit = async () => {
         </View>
 
         {/* Submit */}
-<TouchableOpacity
-  style={[styles.submitBtn, { opacity: agree && !submitting ? 1 : 0.6 }]}
-  activeOpacity={0.9}
-  disabled={!agree || submitting}
-  onPress={onSubmit}
->
-  {submitting ? (
-    <ActivityIndicator size="small" color="#fff" />
-  ) : (
-    <Text style={styles.submitText}>Submit for Approval</Text>
-  )}
-</TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.submitBtn, { opacity: agree && !submitting ? 1 : 0.6 }]}
+          activeOpacity={0.9}
+          disabled={!agree || submitting}
+          onPress={onSubmit}
+        >
+          {submitting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.submitText}>Submit for Approval</Text>
+          )}
+        </TouchableOpacity>
 
       </ScrollView>
     </SafeAreaView>
@@ -756,7 +832,7 @@ const styles = StyleSheet.create({
 
   container: { padding: 16 },
 
-  /* --- Pretty field cards --- */
+  /* field cards */
   fieldCard: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -849,7 +925,7 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
 
-  locateRow: { marginTop: 10, flexDirection: "row" }, // ⬅️ NEW
+  locateRow: { marginTop: 10, flexDirection: "row" },
   locateBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -862,7 +938,7 @@ const styles = StyleSheet.create({
   },
   locateText: { color: "#0F172A", fontWeight: "700" },
 
-  /* Pills (kept for Description) */
+  /* description pill (kept if needed) */
   pill: {
     backgroundColor: palette.pillBg,
     borderRadius: 22,

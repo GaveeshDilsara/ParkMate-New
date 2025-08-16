@@ -1,39 +1,52 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Button } from '@react-navigation/elements';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
-    BackHandler,
-    Image,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  BackHandler,
+  Image,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 const AfterSubmitting = () => {
   const navigation = useNavigation();
+  const allowLeaveRef = useRef(false); // only allow programmatic forward nav
 
-  // Disable swipe back gesture (iOS)
+  // Disable iOS swipe-back (and header back if any) for THIS screen
   useEffect(() => {
-    const parent = navigation.getParent?.();
-    if (parent) {
-      parent.setOptions({ gestureEnabled: false });
-    }
-
+    navigation.setOptions?.({ gestureEnabled: false, headerBackVisible: false });
     return () => {
-      parent?.setOptions({ gestureEnabled: true });
+      navigation.setOptions?.({ gestureEnabled: true, headerBackVisible: true });
     };
   }, [navigation]);
 
-  // Disable Android back button
+  // Block any back/leave actions while focused (Android back, header back, swipe)
   useFocusEffect(
     React.useCallback(() => {
-      const onBackPress = () => true; // Block back action
-      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-      return () => subscription.remove();
-    }, [])
+      // 1) Intercept navigator "back"/"pop" actions
+      const beforeRemove = navigation.addListener('beforeRemove', (e: any) => {
+        if (allowLeaveRef.current) return; // allow when we navigate forward
+        // Block leaving this screen
+        e.preventDefault();
+      });
+
+      // 2) Intercept Android hardware back
+      const onBackPress = () => true; // block
+      const backSub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+
+      return () => {
+        beforeRemove();
+        backSub.remove();
+      };
+    }, [navigation])
   );
+
+  const goHome = () => {
+    allowLeaveRef.current = true;       // allow this navigation
+    router.replace('/AfterAccepting');  // replace so this screen is removed from stack
+  };
 
   return (
     <View style={styles.container}>
@@ -74,17 +87,12 @@ const AfterSubmitting = () => {
         </Text>
       </View>
 
+      {/* Go Home */}
+      <TouchableOpacity style={styles.homeBtn} onPress={goHome} activeOpacity={0.9}>
+        <Text style={styles.homeBtnText}>Go to Home</Text>
+      </TouchableOpacity>
 
-      <View>
-        <Button
-          onPress={() => router.push('/AfterAccepting')}
-          color="#2196F3"
-        >
-          Go to Home
-        </Button>
-      </View>
-
-      {/* Floating Action Button */}
+      {/* Floating Action Button (optional) */}
       <TouchableOpacity style={styles.fab}>
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
@@ -94,7 +102,6 @@ const AfterSubmitting = () => {
 
 export default AfterSubmitting;
 
-// Styles (no changes needed)
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -111,11 +118,6 @@ const styles = StyleSheet.create({
   welcome: {
     fontSize: 16,
     color: '#444',
-  },
-  username: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#222',
   },
   avatar: {
     width: 38,
@@ -160,6 +162,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#888',
     fontWeight: '500',
+  },
+  homeBtn: {
+    marginTop: 16,
+    alignSelf: 'center',
+    backgroundColor: '#2196F3',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  homeBtnText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 14,
   },
   fab: {
     position: 'absolute',

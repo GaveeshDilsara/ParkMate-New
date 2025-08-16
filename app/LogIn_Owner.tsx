@@ -1,4 +1,6 @@
 // app/login-owner.tsx
+import AsyncStorage from "@react-native-async-storage/async-storage"; // ⬅️ ADD
+
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useState } from "react";
@@ -54,11 +56,18 @@ export default function LoginOwner() {
         throw new Error(msg);
       }
 
-      if (data?.success) {
-        // Success: go to owner-home (change to your real screen)
-        router.replace("/OwnerHome");
-        return;
-      }
+if (data?.success) {
+  // ⬅️ SAVE OWNER ID for later (parking agreement upload, etc.)
+  await AsyncStorage.setItem(
+    "pm_owner_id",
+    String(data.id ?? data.owner_id) // your PHP should return one of these
+  );
+
+  // go to owner home (or wherever you want)
+  router.replace("/OwnerHome");
+  return;
+}
+
 
       throw new Error(data?.message || "Unexpected response");
     } catch (e: any) {
