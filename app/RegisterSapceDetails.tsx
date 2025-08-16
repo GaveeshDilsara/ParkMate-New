@@ -2,7 +2,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import * as Location from "expo-location"; // ⬅️ NEW
+import * as Location from "expo-location";
 import { Stack, router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -20,6 +20,14 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+
+/** ====== API CONFIG (CHANGE IP ONLY HERE) ====== */
+// e.g., http://<your-LAN-IP>/Parkmate
+const API_BASE = "http://192.168.8.131/Parkmate";
+const SAVE_ENDPOINT = `${API_BASE}/save_space_details.php`;
+
+/** ====== OWNER ID RESOLVER ====== */
+const DEV_FALLBACK_OWNER_ID = 1; // local testing ONLY
 
 type DaySlot = { day: string; enabled: boolean; startTime: string; endTime: string };
 const STORAGE_KEY = "pm_timeSlots";
@@ -39,7 +47,6 @@ export default function RegisterSpace2() {
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
 
-  // refs to force focus when tapping container
   const nameRef = useRef<TextInput>(null);
 
   // Location (read-only label + coords)
@@ -71,10 +78,11 @@ export default function RegisterSpace2() {
   const [description, setDescription] = useState("");
   const [agree, setAgree] = useState(false);
 
-  // verify / locate state
+  // verify / locate / save state
   const [verifying, setVerifying] = useState(false);
   const [verifiedOnce, setVerifiedOnce] = useState(false);
-  const [locating, setLocating] = useState(false); // ⬅️ NEW
+  const [locating, setLocating] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // time slots (for nice chips)
   const [enabledSlots, setEnabledSlots] = useState<DaySlot[]>([]);
@@ -110,33 +118,106 @@ export default function RegisterSpace2() {
     else setPricing("");
   }, [isFree, pricingAmount, pricingUnit]);
 
-  const onSubmit = () => {
-    const catLines =
-      (["Cars", "Vans", "Bikes", "Buses"] as const)
-        .map((k) => ({ k, v: vehicleCounts[k] || 0 }))
-        .filter((x) => x.v > 0)
-        .map(({ k, v }) => `${k}: ${v}`)
-        .join("\n") || "None selected";
+  /** Resolve owner id from storage (try several keys) */
+  const resolveOwnerId = async (): Promise<number> => {
+    // Try explicit integer keys first
+    for (const key of ["pm_owner_id", "owner_id"]) {
+      const v = await AsyncStorage.getItem(key);
+      if (v && /^\d+$/.test(v)) {
+        return parseInt(v, 10);
+      }
+    }
+    // Try object payload (e.g., { id: 3, ...})
+    const objStr = await AsyncStorage.getItem("pm_owner");
+    if (objStr) {
+      try {
+        const obj = JSON.parse(objStr);
+        if (obj && obj.id && Number.isInteger(obj.id)) return obj.id;
+      } catch {}
+    }
+    // Last resort (dev only)
+    return DEV_FALLBACK_OWNER_ID;
+  };
 
-    const slotLines =
-      enabledSlots.length
-        ? enabledSlots
-            .map((d) => `${d.day.slice(0, 3)} ${to12h(d.startTime)}–${to12h(d.endTime)}`)
-            .join("\n")
-        : "-";
+  /** ---------- SAVE TO PHP ---------- */
+  const onSubmit = async () => {
+    if (!agree) {
+      Alert.alert("Please agree", "You must accept the terms to continue.");
+      return;
+    }
+    if (!name.trim()) {
+      Alert.alert("Missing name", "Please enter the parking space name.");
+      return;
+    }
+    if (!address.trim()) {
+      Alert.alert("Missing address", "Please enter the exact address.");
+      return;
+    }
 
-    Alert.alert(
-      "UI only",
-      [
-        `Name: ${name || "-"}`,
-        `Address: ${address || "-"}`,
-        `Location: ${locationLabel || "-"}`,
-        `Pricing: ${pricing || "-"}`,
-        `Vehicle Categories:\n${catLines}`,
-        `Time Summary:\n${slotLines}`,
-        `Agree: ${agree ? "Yes" : "No"}`,
-      ].join("\n")
-    );
+    try {
+      setSaving(true);
+
+      const owner_id = await resolveOwnerId();
+
+      // Get FULL slot array from storage (not only enabled chips)
+      let timeSlots: DaySlot[] = [];
+      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        try { timeSlots = JSON.parse(raw) as DaySlot[]; } catch {}
+      }
+
+      const payload = {
+        owner_id,
+        name: name.trim(),
+        address: address.trim(),
+
+        location_label: locationLabel || null,
+        latitude: lat,
+        longitude: lon,
+
+        is_free: isFree ? 1 : 0,
+        pricing_amount: isFree ? null : (pricingAmount ? Number(pricingAmount) : null),
+        pricing_unit: isFree ? null : pricingUnit,
+        pricing_text: isFree ? "Free" : (pricingAmount ? `Rs ${pricingAmount} / ${pricingUnit}` : null),
+
+        vehicles: {
+          Cars: vehicleCounts.Cars || 0,
+          Vans: vehicleCounts.Vans || 0,
+          Bikes: vehicleCounts.Bikes || 0,
+          Buses: vehicleCounts.Buses || 0,
+        },
+
+        description: description?.trim() || null,
+        time_slots: Array.isArray(timeSlots) ? timeSlots : [],
+
+        // If you later attach uploads, send a URL/path here
+        legal_doc_url: null,
+      };
+
+      const res = await fetch(SAVE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        const msg = data?.message || "Saving failed";
+        throw new Error(msg);
+      }
+
+      Alert.alert(
+        "Submitted ✅",
+        `Your parking space was saved with ID ${data.id}.`,
+        [
+          { text: "OK", onPress: () => router.push("/AfterSubmitting") },
+        ]
+      );
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Could not save. Check your network & PHP logs.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const verifyAddress = async () => {
@@ -175,7 +256,6 @@ export default function RegisterSpace2() {
     }
   };
 
-  // ⬅️ NEW: set location from coordinates (reverse-geocode for a label)
   const setFromCoords = async (latNum: number, lonNum: number) => {
     try {
       const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latNum}&lon=${lonNum}`;
@@ -189,7 +269,6 @@ export default function RegisterSpace2() {
       setLon(lonNum);
       setVerifiedOnce(true);
     } catch {
-      // fallback to coords only
       setLocationLabel(`${latNum.toFixed(5)}, ${lonNum.toFixed(5)}`);
       setLat(latNum);
       setLon(lonNum);
@@ -197,7 +276,6 @@ export default function RegisterSpace2() {
     }
   };
 
-  // ⬅️ NEW: auto-detect my location
   const useMyLocation = async () => {
     try {
       setLocating(true);
@@ -235,25 +313,23 @@ export default function RegisterSpace2() {
     }
   };
 
-  // Pricing helpers
   const addStep = (step: number) => {
     const n = Number(pricingAmount || 0) + step;
     setPricingAmount(String(Math.max(0, Math.floor(n))));
   };
   const onChangeAmount = (txt: string) => setPricingAmount(txt.replace(/[^\d]/g, ""));
 
-  // Vehicle Category helpers
   const selectedVehicles = () =>
     (["Cars", "Vans", "Bikes", "Buses"] as const)
       .map((k) => ({ k, v: vehicleCounts[k] || 0 }))
       .filter((x) => x.v > 0);
 
   const openCategory = () => {
-    prevCountsRef.current = vehicleCounts; // snapshot
+    prevCountsRef.current = vehicleCounts;
     setShowCategory(true);
   };
   const cancelCategory = () => {
-    setVehicleCounts(prevCountsRef.current); // revert
+    setVehicleCounts(prevCountsRef.current);
     setShowCategory(false);
   };
   const saveCategory = () => setShowCategory(false);
@@ -277,7 +353,7 @@ export default function RegisterSpace2() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* ===== Pretty: Parking Space Name ===== */}
+        {/* Name */}
         <View style={styles.fieldCard}>
           <View style={styles.labelRow}>
             <Ionicons name="home-outline" size={16} color={palette.primary} />
@@ -303,7 +379,7 @@ export default function RegisterSpace2() {
           </Pressable>
         </View>
 
-        {/* ===== Pretty: Exact Address + Verify (inline) ===== */}
+        {/* Address + Verify */}
         <View style={styles.fieldCard}>
           <View style={styles.labelRow}>
             <Ionicons name="location-outline" size={16} color={palette.primary} />
@@ -352,7 +428,7 @@ export default function RegisterSpace2() {
           </Text>
         </View>
 
-        {/* ===== Pretty: Location (tap to open Maps) ===== */}
+        {/* Location display + open maps + "Use my location" */}
         <View style={styles.fieldCard}>
           <View style={styles.labelRow}>
             <Ionicons name="map-outline" size={16} color={palette.primary} />
@@ -392,7 +468,6 @@ export default function RegisterSpace2() {
             />
           </TouchableOpacity>
 
-          {/* NEW: Use my location */}
           <View style={styles.locateRow}>
             <TouchableOpacity
               style={styles.locateBtn}
@@ -421,7 +496,7 @@ export default function RegisterSpace2() {
           </Text>
         </View>
 
-        {/* ===== Availability (chips) ===== */}
+        {/* Availability */}
         <TouchableOpacity
           style={styles.availabilityCard}
           activeOpacity={0.9}
@@ -454,7 +529,7 @@ export default function RegisterSpace2() {
           )}
         </TouchableOpacity>
 
-        {/* ===== Pricing (Free / Per hour / Per day) ===== */}
+        {/* Pricing */}
         <View style={styles.pricingCard}>
           <Text style={styles.sectionTitle}>Pricing</Text>
 
@@ -524,7 +599,7 @@ export default function RegisterSpace2() {
           </Text>
         </View>
 
-        {/* ===== Vehicle Categories with counts (summary + Save/Cancel) ===== */}
+        {/* Vehicle Categories */}
         <View style={styles.catCard}>
           <TouchableOpacity
             style={styles.categoryHeader}
@@ -631,7 +706,7 @@ export default function RegisterSpace2() {
           />
         </View>
 
-        {/* Legal docs */}
+        {/* Legal docs (link to your separate screen) */}
         <View style={styles.legalRow}>
           <Text style={styles.legalLabel}>Legal Documentation Upload :</Text>
           <TouchableOpacity onPress={() => router.push("/ParkingAgreementScreen")}>
@@ -658,19 +733,23 @@ export default function RegisterSpace2() {
 
         {/* Submit */}
         <TouchableOpacity
-          style={[styles.submitBtn, { opacity: agree ? 1 : 0.6 }]}
+          style={[styles.submitBtn, { opacity: agree && !saving ? 1 : 0.6 }]}
           activeOpacity={0.9}
-          disabled={!agree}
+          disabled={!agree || saving}
           onPress={onSubmit}
         >
-          <Text style={styles.submitText}>Submit for Approval</Text>
+          {saving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.submitText}>Submit for Approval</Text>
+          )}
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-/* ---------- Styles ---------- */
+/* ---------- Styles (unchanged) ---------- */
 const palette = {
   bg: "#F5F6FA",
   pillBg: "#F2F4F7",
@@ -709,7 +788,6 @@ const styles = StyleSheet.create({
 
   container: { padding: 16 },
 
-  /* --- Pretty field cards --- */
   fieldCard: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -802,7 +880,7 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
 
-  locateRow: { marginTop: 10, flexDirection: "row" }, // ⬅️ NEW
+  locateRow: { marginTop: 10, flexDirection: "row" },
   locateBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -815,7 +893,6 @@ const styles = StyleSheet.create({
   },
   locateText: { color: "#0F172A", fontWeight: "700" },
 
-  /* Pills (kept for Description) */
   pill: {
     backgroundColor: palette.pillBg,
     borderRadius: 22,
@@ -827,7 +904,6 @@ const styles = StyleSheet.create({
   },
   textArea: { color: palette.text, fontSize: 14, minHeight: 90, textAlignVertical: "top" },
 
-  /* Availability chips card */
   availabilityCard: {
     backgroundColor: "#f7fbff",
     borderRadius: 16,
@@ -869,7 +945,6 @@ const styles = StyleSheet.create({
   },
   emptyAvailText: { color: "#6B7280", fontSize: 12, fontStyle: "italic" },
 
-  /* Pricing */
   pricingCard: {
     backgroundColor: "#e9f3ff",
     borderRadius: 16,
@@ -942,7 +1017,6 @@ const styles = StyleSheet.create({
   stepBtnText: { fontWeight: "900", color: "#0F172A" },
   previewText: { marginTop: 6, fontSize: 12, color: "#0F172A", fontWeight: "600" },
 
-  /* Categories */
   catCard: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -967,7 +1041,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   summaryLine: { color: palette.text, fontWeight: "700", marginBottom: 4 },
-  summaryCount: { color: palette.primary, fontWeight: "900" },
+  summaryCount: { color: "#2F80ED", fontWeight: "900" },
   summaryEmpty: { color: "#6B7280", fontStyle: "italic" },
 
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
@@ -1042,7 +1116,6 @@ const styles = StyleSheet.create({
   },
   saveBtnText: { color: "#fff", fontWeight: "800" },
 
-  /* Submit + misc */
   termsRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 14 },
   checkbox: {
     width: 16,
