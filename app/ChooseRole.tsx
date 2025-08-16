@@ -1,11 +1,11 @@
 import { useRouter } from "expo-router";
 import React from "react";
 import {
-    Image,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity
+  Image,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity
 } from "react-native";
 
 export default function ChooseRole() {

@@ -19,42 +19,54 @@ import {
     View,
 } from "react-native";
 
-// 👇 same base URL used above
+// 👇 change ONLY this line to your PC's LAN IP
 const BASE_URL = "http://192.168.8.131/Parkmate";
 
-export default function LoginDriver() {
+export default function RegisterDriver() {
   const router = useRouter();
 
-  const [identifier, setIdentifier] = useState(""); // username / phone / email
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [secure, setSecure] = useState(true);
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
-    if (!identifier.trim() || !password.trim()) {
-      Alert.alert("Missing info", "Enter your username/phone/email and password.");
+    if (!username.trim() || !password.trim() || !email.trim() || !phone.trim()) {
+      Alert.alert("Missing info", "Please fill all fields.");
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      Alert.alert("Invalid email", "Enter a valid email address.");
+      return;
+    }
+    if (!/^[0-9+\-\s()]{7,}$/.test(phone)) {
+      Alert.alert("Invalid phone", "Enter a valid contact number.");
       return;
     }
 
     try {
       setLoading(true);
-      const res = await fetch(`${BASE_URL}/login_driver.php`, {
+      const res = await fetch(`${BASE_URL}/save_driver_details.php`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ username, password, email, phone }),
       });
       const json = await res.json();
 
       if (!json?.success) {
         setLoading(false);
-        Alert.alert("Login failed", json?.message || "Please try again.");
+        Alert.alert("Sign up failed", json?.message || "Please try again.");
         return;
       }
 
-      await AsyncStorage.setItem("pm_driver", JSON.stringify(json.driver));
+      // (optional) store for later use, or just go to Login
+      await AsyncStorage.setItem("pm_driver_last", JSON.stringify(json.driver));
+
       setLoading(false);
-      // go to your driver's home screen route
-      router.replace("/DriverHome");
+      Alert.alert("Success", "Account created. Please log in.");
+      router.replace("/LogIn_Driver");
     } catch (e: any) {
       setLoading(false);
       Alert.alert("Network error", e?.message ?? "Please try again.");
@@ -66,8 +78,8 @@ export default function LoginDriver() {
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.select({ ios: "padding" })}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled" bounces={false}>
-          {/* Header image + fade */}
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 32 }}>
+          {/* Header */}
           <View style={styles.heroWrap}>
             <ImageBackground
               source={{
@@ -77,29 +89,25 @@ export default function LoginDriver() {
               style={styles.hero}
             >
               <LinearGradient
-                colors={["transparent", "rgba(255,255,255,0.95)", "#fff"]}
+                colors={["transparent", "transparent", "rgba(255,255,255,0.96)", "#fff"]}
                 style={styles.heroGradient}
               />
+              <Text style={styles.heroTitle}>Register Here</Text>
             </ImageBackground>
           </View>
 
           <View style={styles.container}>
-            <Text style={styles.title}>Let’s get started</Text>
-            <Text style={styles.subtitle}>
-              Sign up or log in to find out the best{"\n"}Place for you
-            </Text>
-
-            {/* Identifier */}
+            {/* Username */}
             <View style={styles.inputWrap}>
               <Ionicons name="person-outline" size={20} color="#8D99AE" />
               <TextInput
                 style={styles.input}
-                placeholder="User Name /Phone no /Email"
+                placeholder="User Name"
                 placeholderTextColor="#9BA4B5"
-                value={identifier}
-                onChangeText={setIdentifier}
+                value={username}
+                onChangeText={setUsername}
                 autoCapitalize="none"
-                autoCorrect={false}
+                returnKeyType="next"
               />
             </View>
 
@@ -114,10 +122,40 @@ export default function LoginDriver() {
                 onChangeText={setPassword}
                 secureTextEntry={secure}
                 autoCapitalize="none"
+                returnKeyType="next"
               />
               <TouchableOpacity onPress={() => setSecure((s) => !s)} hitSlop={12}>
                 <Ionicons name={secure ? "eye-off-outline" : "eye-outline"} size={20} color="#8D99AE" />
               </TouchableOpacity>
+            </View>
+
+            {/* Email */}
+            <View style={styles.inputWrap}>
+              <Ionicons name="mail-outline" size={20} color="#8D99AE" />
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                placeholderTextColor="#9BA4B5"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                returnKeyType="next"
+              />
+            </View>
+
+            {/* Contact Number */}
+            <View style={styles.inputWrap}>
+              <Ionicons name="call-outline" size={20} color="#8D99AE" />
+              <TextInput
+                style={styles.input}
+                placeholder="Contact Number"
+                placeholderTextColor="#9BA4B5"
+                value={phone}
+                onChangeText={setPhone}
+                keyboardType="phone-pad"
+                returnKeyType="done"
+              />
             </View>
 
             {/* Submit */}
@@ -127,14 +165,14 @@ export default function LoginDriver() {
               disabled={loading}
               activeOpacity={0.9}
             >
-              {loading ? <ActivityIndicator /> : <Text style={styles.primaryBtnText}>Log in</Text>}
+              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Sign up</Text>}
             </TouchableOpacity>
 
-            {/* Sign up link */}
-            <View style={styles.signupRow}>
-              <Text style={styles.signupText}>Don’t Have an Account ? </Text>
-              <TouchableOpacity onPress={() => router.push("/RegisterDriver")}>
-                <Text style={styles.signupLink}>sign up</Text>
+            {/* Switch to login */}
+            <View style={styles.bottomRow}>
+              <Text style={{ color: "#6B7280" }}>Already have an account? </Text>
+              <TouchableOpacity onPress={() => router.push("/LogIn_Driver")}>
+                <Text style={{ color: "#2F80ED", fontWeight: "600" }}>Log in</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -146,32 +184,41 @@ export default function LoginDriver() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#FFFFFF" },
-  heroWrap: { height: 220, overflow: "hidden" },
+  heroWrap: { height: 260, overflow: "hidden" },
   hero: { flex: 1, justifyContent: "flex-end" },
-  heroGradient: { position: "absolute", bottom: 0, left: 0, right: 0, height: "70%" },
+  heroGradient: { position: "absolute", bottom: 0, left: 0, right: 0, height: "75%" },
+  heroTitle: {
+    position: "absolute",
+    bottom: 24,
+    left: 24,
+    right: 24,
+    color: "#FFFFFF",
+    fontSize: 26,
+    fontWeight: "800",
+    textShadowColor: "rgba(0,0,0,0.25)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
+  },
   container: { paddingHorizontal: 24, marginTop: 8 },
-  title: { fontSize: 28, fontWeight: "800", color: "#1F2937" },
-  subtitle: { marginTop: 6, color: "#6B7280", lineHeight: 18 },
   inputWrap: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F3F4F6",
-    borderRadius: 12,
+    backgroundColor: "#F1F5F9",
+    borderRadius: 14,
     paddingHorizontal: 12,
-    height: 48,
-    marginTop: 16,
+    height: 50,
+    marginTop: 14,
   },
   input: { flex: 1, paddingHorizontal: 10, color: "#111827" },
   primaryBtn: {
     marginTop: 18,
     backgroundColor: "#2F80ED",
-    height: 48,
-    borderRadius: 12,
+    height: 52,
+    borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
+    elevation: 2,
   },
-  primaryBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 16 },
-  signupRow: { flexDirection: "row", justifyContent: "center", marginTop: 18 },
-  signupText: { color: "#6B7280" },
-  signupLink: { color: "#2F80ED", fontWeight: "600" },
+  primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  bottomRow: { flexDirection: "row", justifyContent: "center", marginTop: 18 },
 });
