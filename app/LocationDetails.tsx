@@ -2,19 +2,19 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Dimensions,
   FlatList,
   Image,
+  Modal,
+  Pressable,
   RefreshControl,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 
@@ -42,15 +42,10 @@ type Space = {
   vehicle_counts?: Counts;        // capacity
   occupied_counts?: Counts;       // live
   available_counts?: Counts;      // live
+  images?: string[];              // absolute URLs from API
 };
 
-const BANNERS = [
-  { id: "1", uri: "https://images.unsplash.com/photo-1518306727298-4c17e1bf0681?q=80&w=1200&auto=format&fit=crop" },
-  { id: "2", uri: "https://images.unsplash.com/photo-1484312152213-d713e8b7c053?q=80&w=1200&auto=format&fit=crop" },
-  { id: "3", uri: "https://images.unsplash.com/photo-1506521781263-d8422e82f27a?q=80&w=1200&auto=format&fit=crop" },
-];
-
-// Which vehicle keys to show per space (order + icon)
+// Vehicle chips (order + icon)
 const VEH_KEYS: Array<{ key: "Cars" | "Buses" | "Bikes" | "Vans"; label: string; icon: any }> = [
   { key: "Cars", label: "Car",  icon: "car-outline" },
   { key: "Vans", label: "Van",  icon: "car-sport-outline" },
@@ -66,6 +61,12 @@ const BORDER = "#E5E7EB";
 const TEXT = "#0F172A";
 const MUTED = "#6B7280";
 
+// layout constants for the image grid
+const LIST_PAD = 16;   // FlatList content padding L/R
+const CARD_PAD = 12;   // styles.card padding L/R
+const GRID_GAP = 8;    // space between tiles (horizontal & vertical)
+const COLS = 2;        // exactly 2 columns -> 3 rows for 6 images
+
 export default function LocationDetails() {
   const params = useLocalSearchParams<{ lat?: string; lng?: string; radius?: string }>();
   const lat = params.lat ? parseFloat(params.lat) : undefined;
@@ -75,8 +76,19 @@ export default function LocationDetails() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [spaces, setSpaces] = useState<Space[]>([]);
-  const [bannerIndex, setBannerIndex] = useState(0);
-  const bannerRef = useRef<ScrollView | null>(null);
+
+  // Image viewer state
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
+
+  const openViewer = (uri: string) => {
+    setViewerUri(uri);
+    setViewerVisible(true);
+  };
+  const closeViewer = () => {
+    setViewerVisible(false);
+    setViewerUri(null);
+  };
 
   const fetchSpaces = async () => {
     try {
@@ -103,6 +115,7 @@ export default function LocationDetails() {
         vehicle_counts: s.vehicle_counts ?? {},
         occupied_counts: s.occupied_counts ?? {},
         available_counts: s.available_counts ?? {},
+        images: Array.isArray(s.images) ? s.images.slice(0, 6) : [], // limit to 6
       }));
 
       setSpaces(items);
@@ -192,7 +205,6 @@ export default function LocationDetails() {
       }
     }
 
-    // if no explicit day, fallback to min/max of all as “daily”
     if (!foundForToday && arr.length) {
       let minAll = Infinity, maxAll = -Infinity, any = false;
       for (const a of arr) {
@@ -254,9 +266,17 @@ export default function LocationDetails() {
           ? `Rs ${item.price_amount} / ${item.price_unit}`
           : "Paid");
 
+    // compute grid tile size to exactly fill the card inner width
+    const cardInnerWidth = width - (LIST_PAD * 2) - (CARD_PAD * 2);
+    const tileW = Math.floor((cardInnerWidth - GRID_GAP) / COLS); // 2 cols -> one gap
+    const tileH = Math.round(tileW * 0.66); // 3:2 aspect ratio
+
+    const imgs = (item.images ?? []).slice(0, 6);
+    const rows: string[][] = [];
+    for (let i = 0; i < imgs.length; i += 2) rows.push(imgs.slice(i, i + 2));
+
     return (
-      <TouchableOpacity
-        activeOpacity={0.9}
+      <Pressable
         onPress={() =>
           router.push({
             pathname: "/Directions",
@@ -295,10 +315,9 @@ export default function LocationDetails() {
           </View>
 
           <View style={[styles.openPill, openNow ? styles.openNowBg : styles.closedBg]}>
-  <View style={[styles.statusDot, { backgroundColor: openNow ? "#22C55E" : "#EF4444" }]} />
-  <Text style={styles.openPillText}>{label}</Text>
-</View>
-
+            <View style={[styles.statusDot, { backgroundColor: openNow ? "#22C55E" : "#EF4444" }]} />
+            <Text style={styles.openPillText}>{label}</Text>
+          </View>
         </View>
 
         {/* Vehicle chips: live available per category */}
@@ -315,16 +334,44 @@ export default function LocationDetails() {
           <Text style={styles.lineValue}>{totalAvailable(avail)}</Text>
         </View>
 
-        {/* Thumbnail */}
-        <Image
-          source={{
-            uri:
-              "https://images.unsplash.com/photo-1486136600666-1d268ac63b22?q=80&w=1200&auto=format&fit=crop",
-          }}
-          style={styles.thumb}
-          resizeMode="cover"
-        />
-      </TouchableOpacity>
+        {/* === Images as 3 rows × 2 columns (max 6) === */}
+        {imgs.length > 0 ? (
+          <View style={styles.imageGrid}>
+            {rows.map((row, rIdx) => (
+              <View key={rIdx} style={[styles.imageRow, rIdx > 0 && { marginTop: GRID_GAP }]}>
+                {/* left tile */}
+                <Pressable
+                  style={[styles.imgTile, { width: tileW, height: tileH }]}
+                  onPress={() => openViewer(row[0])}
+                >
+                  <Image source={{ uri: row[0] }} style={styles.imgTileImg} resizeMode="cover" />
+                </Pressable>
+
+                {/* right tile (if present), else spacer to keep full width */}
+                {row[1] ? (
+                  <Pressable
+                    style={[styles.imgTile, { width: tileW, height: tileH, marginLeft: GRID_GAP }]}
+                    onPress={() => openViewer(row[1]!)}
+                  >
+                    <Image source={{ uri: row[1] }} style={styles.imgTileImg} resizeMode="cover" />
+                  </Pressable>
+                ) : (
+                  <View style={{ width: tileW, height: tileH, marginLeft: GRID_GAP }} />
+                )}
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Image
+            source={{
+              uri:
+                "https://images.unsplash.com/photo-1486136600666-1d268ac63b22?q=80&w=1200&auto=format&fit=crop",
+            }}
+            style={styles.thumbFallback}
+            resizeMode="cover"
+          />
+        )}
+      </Pressable>
     );
   };
 
@@ -338,9 +385,9 @@ export default function LocationDetails() {
         style={styles.header}
       >
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} activeOpacity={0.8}>
+          <Pressable onPress={() => router.back()} style={styles.headerBtn}>
             <Ionicons name="chevron-back" size={20} color="#fff" />
-          </TouchableOpacity>
+          </Pressable>
           <Text style={styles.headerTitle}>Nearby Parking</Text>
           <View style={[styles.headerBtn, { opacity: 0.6 }]}>
             <Ionicons name="sparkles-outline" size={18} color="#fff" />
@@ -373,13 +420,13 @@ export default function LocationDetails() {
         <FlatList
           data={sorted}
           keyExtractor={(item) => String(item.id)}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 22 }}
+          contentContainerStyle={{ paddingHorizontal: LIST_PAD, paddingBottom: 22 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchSpaces(); }} />
           }
           renderItem={renderCard}
           ListEmptyComponent={
-            <View style={{ paddingHorizontal: 16, paddingTop: 20, alignItems: "center" }}>
+            <View style={{ paddingHorizontal: LIST_PAD, paddingTop: 20, alignItems: "center" }}>
               <Ionicons name="map-outline" size={28} color={MUTED} />
               <Text style={{ color: MUTED, marginTop: 6, textAlign: "center" }}>
                 No spaces found nearby. Try increasing the radius or zooming out.
@@ -388,6 +435,27 @@ export default function LocationDetails() {
           }
         />
       )}
+
+      {/* Full-screen image viewer */}
+      <Modal
+        visible={viewerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeViewer}
+      >
+        <View style={styles.viewerBackdrop}>
+          <Pressable style={styles.viewerCloseBtn} onPress={closeViewer}>
+            <Ionicons name="close" size={24} color="#fff" />
+          </Pressable>
+          <View style={styles.viewerCenter}>
+            <Image
+              source={{ uri: viewerUri ?? "" }}
+              style={styles.viewerImage}
+              resizeMode="contain"
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -424,17 +492,11 @@ const styles = StyleSheet.create({
   headChipText: { color: "#fff", fontWeight: "800", fontSize: 12 },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#22C55E" },
 
-  // Banner
-  bannerWrap: { width, height: 160, marginBottom: 8, backgroundColor: "#fff" },
-  dots: { position: "absolute", bottom: 10, width, flexDirection: "row", justifyContent: "center", gap: 6 },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#D1D5DB" },
-  dotActive: { backgroundColor: "#111827" },
-
   // Cards
   card: {
     backgroundColor: CARD,
     borderRadius: 16,
-    padding: 12,
+    padding: CARD_PAD,
     marginBottom: 14,
     borderWidth: 1,
     borderColor: BORDER,
@@ -493,17 +555,52 @@ const styles = StyleSheet.create({
   lineLabel: { color: TEXT, fontSize: 14 },
   lineValue: { color: TEXT, fontWeight: "800" },
 
-  thumb: { width: "100%", height: 120, borderRadius: 12, marginTop: 10, backgroundColor: "#E5E7EB" },
+  // Image grid (rows of 2)
+  imageGrid: { marginTop: 10 },
+  imageRow: { flexDirection: "row" },
+  imgTile: {
+    backgroundColor: "#E5E7EB",
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  imgTileImg: { width: "100%", height: "100%" },
 
-  // Bottom back
-  bottomBar: { position: "absolute", left: 0, right: 0, bottom: 8, paddingLeft: 12 },
-  backBtn: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: "#fff",
-    alignItems: "center", justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER,
-    marginLeft: 4,
-    shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+  // Fallback image if no uploads
+  thumbFallback: {
+    width: "100%",
+    height: 120,
+    borderRadius: 12,
+    marginTop: 10,
+    backgroundColor: "#E5E7EB",
+  },
+
+  // Viewer modal
+  viewerBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  viewerCenter: {
+    width: "100%",
+    height: "80%",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 12,
+  },
+  viewerImage: { width: "100%", height: "100%" },
+  viewerCloseBtn: {
+    position: "absolute",
+    top: 42,
+    right: 20,
+    zIndex: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.35)",
   },
 });
