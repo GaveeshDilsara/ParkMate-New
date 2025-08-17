@@ -41,6 +41,10 @@ export default function RootLayout() {
         name="RegisterSapceDetails"
         options={{ headerShown: false, gestureEnabled: false }}
       />
+      <Stack.Screen
+        name="DriverHome"
+        options={{ headerShown: false, gestureEnabled: false }}
+      />
     </Stack>
   );
 }
