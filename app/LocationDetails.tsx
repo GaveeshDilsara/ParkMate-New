@@ -3,17 +3,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    FlatList,
-    Image,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator, Alert, Dimensions, FlatList, Image, SafeAreaView, ScrollView,
+  StyleSheet, Text, TouchableOpacity, View,
 } from "react-native";
 
 const { width } = Dimensions.get("window");
@@ -21,6 +12,8 @@ const { width } = Dimensions.get("window");
 // 👇 same backend base as DriverHome
 const BASE_URL = "http://192.168.8.131/Parkmate";
 const SPACES_ENDPOINT = `${BASE_URL}/list_spaces_near.php`;
+
+type Counts = Record<string, number>;
 
 type Space = {
   id: number;
@@ -35,7 +28,9 @@ type Space = {
   pricing_text: string | null;
   distance_m?: number | null;
   availability?: { day?: string; start?: string; end?: string }[];
-  vehicle_counts?: Record<string, number>; // expects keys like Cars, Buses, Bikes (Vans optional)
+  vehicle_counts?: Counts;        // capacity
+  occupied_counts?: Counts;       // 🆕 live
+  available_counts?: Counts;      // 🆕 live
 };
 
 const BANNERS = [
@@ -45,63 +40,76 @@ const BANNERS = [
 ];
 
 // Which vehicle keys to show per space (order + icon)
-const VEH_KEYS: Array<{ key: "Cars" | "Buses" | "Bikes"; label: string; icon: any }> = [
-  { key: "Cars", label: "Car", icon: "car-outline" },
-  { key: "Buses", label: "Bus", icon: "bus-outline" },
+const VEH_KEYS: Array<{ key: "Cars" | "Buses" | "Bikes" | "Vans"; label: string; icon: any }> = [
+  { key: "Cars", label: "Car",  icon: "car-outline" },
+  { key: "Vans", label: "Van",  icon: "car-sport-outline" },
   { key: "Bikes", label: "Bike", icon: "bicycle-outline" },
+  { key: "Buses", label: "Bus",  icon: "bus-outline" },
 ];
+
+const REFRESH_MS = 5000; // 🆕 near real-time polling (5s)
 
 export default function LocationDetails() {
   const params = useLocalSearchParams<{ lat?: string; lng?: string; radius?: string }>();
   const lat = params.lat ? parseFloat(params.lat) : undefined;
   const lng = params.lng ? parseFloat(params.lng) : undefined;
-  const radius = params.radius ? parseFloat(params.radius) : 5000; // fallback 5km
+  const radius = params.radius ? parseFloat(params.radius) : 5000;
 
   const [loading, setLoading] = useState(true);
   const [spaces, setSpaces] = useState<Space[]>([]);
-
-  // Banner carousel state
   const [bannerIndex, setBannerIndex] = useState(0);
   const bannerRef = useRef<ScrollView | null>(null);
 
+  const fetchSpaces = async () => {
+    try {
+      const url = `${SPACES_ENDPOINT}?lat=${encodeURIComponent(lat ?? 0)}&lng=${encodeURIComponent(
+        lng ?? 0
+      )}&radius=${encodeURIComponent(radius)}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (!json?.success) throw new Error(json?.message || "Failed to load spaces");
+
+      const items: Space[] = (json.items || []).map((s: any) => ({
+        id: Number(s.id),
+        name: String(s.name),
+        address: s.address ?? "",
+        location_label: s.location_label ?? null,
+        latitude: Number(s.latitude),
+        longitude: Number(s.longitude),
+        is_free: !!s.is_free,
+        price_amount: s.price_amount != null ? Number(s.price_amount) : null,
+        price_unit: s.price_unit ?? null,
+        pricing_text: s.pricing_text ?? null,
+        distance_m: s.distance_m != null ? Number(s.distance_m) : null,
+        availability: Array.isArray(s.availability) ? s.availability : [],
+        vehicle_counts: s.vehicle_counts ?? {},
+        occupied_counts: s.occupied_counts ?? {},    // 🆕 live
+        available_counts: s.available_counts ?? {},  // 🆕 live
+      }));
+
+      setSpaces(items);
+    } catch (e: any) {
+      Alert.alert("Error", e?.message ?? "Could not load spaces.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // initial + polling 🆕
   useEffect(() => {
     let mounted = true;
     (async () => {
-      try {
-        setLoading(true);
-        const url = `${SPACES_ENDPOINT}?lat=${encodeURIComponent(lat ?? 0)}&lng=${encodeURIComponent(
-          lng ?? 0
-        )}&radius=${encodeURIComponent(radius)}`;
-        const res = await fetch(url);
-        const json = await res.json();
-
-        if (!json?.success) throw new Error(json?.message || "Failed to load spaces");
-
-        const items: Space[] = (json.items || []).map((s: any) => ({
-          id: Number(s.id),
-          name: String(s.name),
-          address: s.address ?? "",
-          location_label: s.location_label ?? null,
-          latitude: Number(s.latitude),
-          longitude: Number(s.longitude),
-          is_free: !!s.is_free,
-          price_amount: s.price_amount != null ? Number(s.price_amount) : null,
-          price_unit: s.price_unit ?? null,
-          pricing_text: s.pricing_text ?? null,
-          distance_m: s.distance_m != null ? Number(s.distance_m) : null,
-          availability: Array.isArray(s.availability) ? s.availability : [],
-          vehicle_counts: typeof s.vehicle_counts === "object" && s.vehicle_counts ? s.vehicle_counts : {},
-        }));
-
-        if (mounted) setSpaces(items);
-      } catch (e: any) {
-        Alert.alert("Error", e?.message ?? "Could not load spaces.");
-      } finally {
-        if (mounted) setLoading(false);
-      }
+      setLoading(true);
+      await fetchSpaces();
     })();
+
+    const t = setInterval(() => {
+      if (mounted) fetchSpaces();
+    }, REFRESH_MS);
+
     return () => {
       mounted = false;
+      clearInterval(t);
     };
   }, [lat, lng, radius]);
 
@@ -116,7 +124,7 @@ export default function LocationDetails() {
     return clone;
   }, [spaces]);
 
-  // ======= time helpers (TypeScript-safe) =======
+  // time helpers (unchanged)
   function hhmmToMinutes(s?: string | null): number | null {
     if (!s) return null;
     const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
@@ -157,10 +165,9 @@ export default function LocationDetails() {
   const distanceText = (m?: number | null) =>
     typeof m === "number" ? `${(m / 1000).toFixed(2)} km away` : "";
 
-  const totalAllVehicles = (vc?: Record<string, number>) =>
-    (vc?.Cars ?? 0) + (vc?.Buses ?? 0) + (vc?.Bikes ?? 0) + (vc?.Vans ?? 0);
+  const totalAvailable = (c?: Counts) =>
+    (c?.Cars ?? 0) + (c?.Buses ?? 0) + (c?.Bikes ?? 0) + (c?.Vans ?? 0); // 🆕 use available
 
-  // a single vehicle chip
   const VehicleChip = ({ icon, label, count }: { icon: any; label: string; count: number }) => {
     const active = count > 0;
     return (
@@ -188,8 +195,10 @@ export default function LocationDetails() {
         <Text style={styles.welcome}>
           Welcome Back,<Text style={{ fontWeight: "800" }}> User</Text> <Text>👋</Text>
         </Text>
-        <View style={styles.avatar}>
-          <Ionicons name="person-circle-outline" size={26} color="#111827" />
+        {/* Live dot 🆕 */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#10B981" }} />
+          <Text style={{ color: "#6B7280", fontSize: 12 }}>Live</Text>
         </View>
       </View>
 
@@ -229,7 +238,7 @@ export default function LocationDetails() {
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 22 }}
           renderItem={({ item }) => {
-            const vc = item.vehicle_counts || {};
+            const avail = item.available_counts || {}; // 🆕 live
             return (
               <TouchableOpacity
                 activeOpacity={0.9}
@@ -255,21 +264,18 @@ export default function LocationDetails() {
                   {!!item.distance_m && <Text style={styles.distance}>{distanceText(item.distance_m)}</Text>}
                 </View>
 
-                {/* Vehicle chips (per space) */}
+                {/* Vehicle chips — show LIVE available per category 🆕 */}
                 <View style={styles.chipsRow}>
                   {VEH_KEYS.map(({ key, label, icon }) => (
-                    <VehicleChip key={key} icon={icon} label={label} count={vc[key] ?? 0} />
+                    <VehicleChip key={key} icon={icon} label={label} count={avail[key] ?? 0} />
                   ))}
-                  {"Vans" in vc && (
-                    <VehicleChip icon="car-sport-outline" label="Van" count={vc["Vans"] ?? 0} />
-                  )}
                 </View>
 
                 {/* Summary lines */}
                 <View style={styles.line}>
                   <Ionicons name="albums-outline" size={18} color="#3B82F6" />
                   <Text style={styles.lineLabel}>Spaces Available:</Text>
-                  <Text style={styles.lineValue}>{totalAllVehicles(vc)}</Text>
+                  <Text style={styles.lineValue}>{totalAvailable(avail)}</Text>
                 </View>
 
                 <View style={styles.line}>
@@ -287,10 +293,7 @@ export default function LocationDetails() {
 
                 {/* Thumbnail */}
                 <Image
-                  source={{
-                    uri:
-                      "https://images.unsplash.com/photo-1486136600666-1d268ac63b22?q=80&w=1200&auto=format&fit=crop",
-                  }}
+                  source={{ uri: "https://images.unsplash.com/photo-1486136600666-1d268ac63b22?q=80&w=1200&auto=format&fit=crop" }}
                   style={styles.thumb}
                   resizeMode="cover"
                 />
@@ -317,153 +320,36 @@ export default function LocationDetails() {
   );
 }
 
-/* =========== styles =========== */
+/* =========== styles (same as yours) =========== */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F3F4F6" },
-
-  topRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-  },
+  topRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12 },
+  iconBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", marginRight: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB" },
   welcome: { flex: 1, color: "#111827", fontSize: 18, fontWeight: "600" },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-  },
-
-  bannerWrap: {
-    width,
-    height: 160,
-    marginBottom: 8,
-    backgroundColor: "#fff",
-  },
-  dots: {
-    position: "absolute",
-    bottom: 10,
-    width,
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 6,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#D1D5DB",
-  },
+  bannerWrap: { width, height: 160, marginBottom: 8, backgroundColor: "#fff" },
+  dots: { position: "absolute", bottom: 10, width, flexDirection: "row", justifyContent: "center", gap: 6 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#D1D5DB" },
   dotActive: { backgroundColor: "#111827" },
-
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-  },
-  cardTitle: {
-    flex: 1,
-    marginLeft: 6,
-    marginRight: 6,
-    color: "#111827",
-    fontSize: 16,
-    fontWeight: "800",
-  },
+  card: { backgroundColor: "#fff", borderRadius: 14, padding: 12, marginBottom: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB" },
+  cardTitle: { flex: 1, marginLeft: 6, marginRight: 6, color: "#111827", fontSize: 16, fontWeight: "800" },
   distance: { color: "#6B7280", fontSize: 12 },
-
-  // vehicle chips
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6, marginBottom: 6 },
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 10,
-    height: 32,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  chipActive: {
-    backgroundColor: "#111827",
-    borderColor: "#111827",
-  },
-  chipInactive: {
-    backgroundColor: "#F3F4F6",
-    borderColor: "#E5E7EB",
-  },
+  chip: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, height: 32, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth },
+  chipActive: { backgroundColor: "#111827", borderColor: "#111827" },
+  chipInactive: { backgroundColor: "#F3F4F6", borderColor: "#E5E7EB" },
   chipText: { marginLeft: 6, fontWeight: "800" },
   chipTextActive: { color: "#fff" },
   chipTextInactive: { color: "#6B7280" },
-  badge: {
-    marginLeft: 8,
-    minWidth: 20,
-    height: 20,
-    paddingHorizontal: 6,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  badge: { marginLeft: 8, minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   badgeActive: { backgroundColor: "#2563EB" },
   badgeInactive: { backgroundColor: "#E5E7EB" },
   badgeText: { fontSize: 12, fontWeight: "800" },
   badgeTextActive: { color: "#fff" },
   badgeTextInactive: { color: "#6B7280" },
-
-  line: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 6,
-  },
+  line: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
   lineLabel: { color: "#111827", fontSize: 14 },
   lineValue: { color: "#111827", fontWeight: "700" },
-
-  thumb: {
-    width: "100%",
-    height: 120,
-    borderRadius: 12,
-    marginTop: 10,
-    backgroundColor: "#E5E7EB",
-  },
-
-  bottomBar: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 8,
-    paddingLeft: 12,
-  },
-  backBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-    marginLeft: 4,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
+  thumb: { width: "100%", height: 120, borderRadius: 12, marginTop: 10, backgroundColor: "#E5E7EB" },
+  bottomBar: { position: "absolute", left: 0, right: 0, bottom: 8, paddingLeft: 12 },
+  backBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB", marginLeft: 4, shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
 });

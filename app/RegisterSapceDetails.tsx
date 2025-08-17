@@ -818,6 +818,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderBottomLeftRadius: 14,
     borderBottomRightRadius: 14,
+    
   },
   backBtn: {
     width: 36,

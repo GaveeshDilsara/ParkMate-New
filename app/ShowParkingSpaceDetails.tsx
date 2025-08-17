@@ -3,19 +3,19 @@ import { Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-    Alert,
-    Dimensions,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  Dimensions,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 type VehicleKind = "Cars" | "Vans" | "Bikes" | "Buses";
@@ -479,7 +479,7 @@ const CELL = Math.floor((WIDTH - 32 - GRID_GAP * (COLS - 1)) / COLS);
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
 
-  appbar: { backgroundColor: "#3B82F6", height: 56, flexDirection: "row", alignItems: "center", paddingHorizontal: 8 },
+  appbar: {marginTop:35, backgroundColor: "#3B82F6", height: 56, flexDirection: "row", alignItems: "center", paddingHorizontal: 8 },
   appbarBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   appbarTitle: { flex: 1, color: "#fff", fontSize: 18, fontWeight: "800", paddingHorizontal: 6 },
 
