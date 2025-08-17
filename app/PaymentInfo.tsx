@@ -2,12 +2,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 /** ===== API (edit IP only) ===== */
@@ -24,7 +24,6 @@ type Payload = {
   space_id: number;
   vehicle_no?: string;
   category?: VehicleKind;
-  // start_time / end_time are ignored if present; we read from DB
 };
 
 type SpacePricing = {
@@ -39,22 +38,38 @@ type SessionRow = {
   space_id: number;
   vehicle_no: string;
   category: VehicleKind;
-  start_time: string; // ISO from DB
-  end_time: string | null; // may be null if still open
+  start_time: string; // "YYYY-MM-DD HH:MM:SS" from MySQL
+  end_time: string | null;
   status: "in" | "out";
 };
 
-/** ===== Helpers ===== */
-const lcAmPm = (s: string) => s.replace("AM", "am").replace("PM", "pm");
-const fmtTime = (iso: string) =>
-  lcAmPm(new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true }));
+/** ===== Helpers (robust time) ===== */
+/** Parse MySQL DATETIME ("YYYY-MM-DD HH:MM:SS") as LOCAL time */
+const parseSqlDateLocal = (s: string) => {
+  // Ensure ISO-like with 'T', no 'Z' so JS treats it as local time
+  const isoLike = s.replace(" ", "T");
+  return new Date(isoLike);
+};
+
+const fmtLocalTime = (d: Date) =>
+  new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    // If you want to force SL time on all devices:
+    // timeZone: "Asia/Colombo",
+  })
+    .format(d)
+    .replace("AM", "am")
+    .replace("PM", "pm");
 
 const ceil = (n: number) => Math.ceil(n);
 
-function computeDuration(startISO: string, endISO: string) {
-  const ms = Math.max(0, +new Date(endISO) - +new Date(startISO));
+/** Use Date objects to avoid parsing inconsistencies */
+function computeDurationByDate(start: Date, end: Date) {
+  const ms = Math.max(0, end.getTime() - start.getTime());
   const mins = Math.round(ms / 60000);
-  const hrsRounded = Math.max(1, ceil(mins / 60));
+  const hrsRounded = Math.max(1, ceil(mins / 60)); // round up to next hour min=1
   const pretty = mins < 60 ? `${mins} mins` : `${hrsRounded} ${hrsRounded === 1 ? "hr" : "hrs"}`;
   return { mins, hrsRounded, pretty };
 }
@@ -66,7 +81,11 @@ export default function PaymentInfo() {
   const { details } = useLocalSearchParams<PaymentParams>();
 
   const payload: Payload | null = useMemo(() => {
-    try { return details ? JSON.parse(decodeURIComponent(details)) : null; } catch { return null; }
+    try {
+      return details ? JSON.parse(decodeURIComponent(details)) : null;
+    } catch {
+      return null;
+    }
   }, [details]);
 
   const [session, setSession] = useState<SessionRow | null>(null);
@@ -75,7 +94,7 @@ export default function PaymentInfo() {
   const [openTop, setOpenTop] = useState(true);
   const [openInfo, setOpenInfo] = useState(true);
 
-  // fetch session (from vehicles table) + pricing (from space_details)
+  // fetch session (vehicles) + pricing (space_details)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -88,10 +107,10 @@ export default function PaymentInfo() {
         const sJ = await sRes.json();
         const pJ = await pRes.json();
 
-        if (mounted) {
-          if (!sJ?.success) throw new Error("Session not found");
-          setSession(sJ.item as SessionRow);
+        if (!sJ?.success) throw new Error("Session not found");
 
+        if (mounted) {
+          setSession(sJ.item as SessionRow);
           setPricing({
             is_free: !!pJ?.is_free,
             price_amount: pJ?.price_amount != null ? Number(pJ.price_amount) : null,
@@ -108,7 +127,9 @@ export default function PaymentInfo() {
         if (mounted) setLoading(false);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [payload]);
 
   if (!payload) {
@@ -122,13 +143,18 @@ export default function PaymentInfo() {
     );
   }
 
-  const startISO = session?.start_time ?? new Date().toISOString();
-  const endISO = session?.end_time ?? new Date().toISOString();
-  const { mins, hrsRounded, pretty } = computeDuration(startISO, endISO);
+  // Build Date objects safely
+  const startDate =
+    session?.start_time ? parseSqlDateLocal(session.start_time) : new Date();
+  const endDate =
+    (session?.end_time ? parseSqlDateLocal(session.end_time) : null) || new Date();
 
-  const rateLabel = pricing?.is_free
-    ? "Free"
-    : pricing?.price_amount != null && pricing?.price_unit
+  const { mins, hrsRounded, pretty } = computeDurationByDate(startDate, endDate);
+
+  const rateLabel =
+    pricing?.is_free
+      ? "Free"
+      : pricing?.price_amount != null && pricing?.price_unit
       ? `Rs.${pricing.price_amount} per ${pricing.price_unit === "hour" ? "hr" : "day"}`
       : "Paid";
 
@@ -200,11 +226,11 @@ export default function PaymentInfo() {
             </View>
             <View style={styles.rowItem}>
               <Text style={styles.label}>Arrival Time</Text>
-              <Text style={styles.value}>{fmtTime(startISO)}</Text>
+              <Text style={styles.value}>{fmtLocalTime(startDate)}</Text>
             </View>
             <View style={styles.rowItem}>
               <Text style={styles.label}>Leave Time</Text>
-              <Text style={styles.value}>{fmtTime(endISO)}</Text>
+              <Text style={styles.value}>{fmtLocalTime(endDate)}</Text>
             </View>
           </View>
         )}
