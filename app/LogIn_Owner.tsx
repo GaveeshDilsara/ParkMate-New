@@ -1,6 +1,7 @@
 // app/login-owner.tsx
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -23,13 +24,20 @@ import {
 /** 👉 CHANGE THIS when your PC’s IP changes (or replace with ngrok/cloudflared URL) */
 const LOGIN_URL = "http://192.168.8.131/ParkMate/login_owner.php";
 
+const BLUE = "#0099ff";
+const BG = "#f6f7fb";
+const SURFACE = "#ffffff";
+const TEXT = "#0f172a";
+const MUTED = "#6b7280";
+const BORDER = "#e6e9f2";
+
 export default function LoginOwner() {
   const [usernameOrPhone, setUsernameOrPhone] = useState("");
   const [password, setPassword] = useState("");
   const [secure, setSecure] = useState(true);
   const [loading, setLoading] = useState(false);
 
-  // ⚠️ Backend flow kept identical
+  // ⚠️ Backend flow kept IDENTICAL
   const handleLogin = async () => {
     if (!usernameOrPhone.trim() || !password.trim()) {
       Alert.alert("Missing info", "Please enter username/phone/email and password.");
@@ -58,6 +66,7 @@ export default function LoginOwner() {
       }
 
       if (data?.success) {
+        // save owner id and go home
         await AsyncStorage.setItem("pm_owner_id", String(data.id ?? data.owner_id));
         router.replace("/OwnerHome");
         return;
@@ -74,77 +83,77 @@ export default function LoginOwner() {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" />
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.select({ ios: "padding", android: undefined })}
       >
-        <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-          {/* Hero */}
+        <ScrollView contentContainerStyle={{ paddingBottom: 28 }} keyboardShouldPersistTaps="handled">
+          {/* HERO (same composition as Driver) */}
           <View style={styles.heroWrap}>
             <ImageBackground
               source={require("../assets/images/parking-car.jpg")}
               style={styles.hero}
-              imageStyle={{ resizeMode: "cover" }}
+              imageStyle={styles.heroImg}
             >
-              <View style={styles.overlay} />
+              <View style={styles.heroOverlay} />
               <View style={styles.heroTextWrap}>
-                <Text style={styles.kicker}>Welcome back 👋</Text>
+                <Text style={styles.kicker}>Owner Portal</Text>
                 <Text style={styles.title}>Let’s get you parked</Text>
-                <Text style={styles.subtitle}>
-                  Log in to manage your spaces and see live activity.
-                </Text>
+                <Text style={styles.subtitle}>Sign in to manage your spaces</Text>
               </View>
+              <LinearGradient
+                colors={["transparent", "rgba(0,0,0,0.18)", "rgba(0,0,0,0.36)"]}
+                style={styles.heroGradient}
+              />
             </ImageBackground>
           </View>
 
-          {/* Card */}
-          <View style={styles.cardWrap}>
+          {/* CARD */}
+          <View style={styles.content}>
             <View style={styles.card}>
               {/* Identifier */}
               <View style={styles.inputWrap}>
-                <Ionicons name="person-outline" size={18} color="#64748b" style={styles.leftIcon} />
+                <View style={styles.leadingIcon}>
+                  <Ionicons name="person-outline" size={18} color={BLUE} />
+                </View>
                 <TextInput
-                  placeholder="User Name / Phone no / Email"
+                  placeholder="Username / Phone / Email"
                   placeholderTextColor="#9aa0a6"
                   value={usernameOrPhone}
                   onChangeText={setUsernameOrPhone}
-                  style={[styles.input, { paddingLeft: 42 }]}
+                  style={styles.input}
                   autoCapitalize="none"
-                  keyboardType="email-address"
+                  autoCorrect={false}
                   returnKeyType="next"
                 />
               </View>
 
               {/* Password */}
               <View style={styles.inputWrap}>
-                <Ionicons name="lock-closed-outline" size={18} color="#64748b" style={styles.leftIcon} />
+                <View style={styles.leadingIcon}>
+                  <Ionicons name="lock-closed-outline" size={18} color={BLUE} />
+                </View>
                 <TextInput
                   placeholder="Password"
                   placeholderTextColor="#9aa0a6"
                   value={password}
                   onChangeText={setPassword}
-                  style={[styles.input, { paddingLeft: 42, paddingRight: 42 }]}
+                  style={styles.input}
                   secureTextEntry={secure}
+                  autoCapitalize="none"
                   returnKeyType="go"
                   onSubmitEditing={handleLogin}
                 />
-                <TouchableOpacity
-                  style={styles.eyeBtn}
-                  onPress={() => setSecure((s) => !s)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Ionicons
-                    name={secure ? "eye-off-outline" : "eye-outline"}
-                    size={22}
-                    color="#475569"
-                  />
+                <TouchableOpacity onPress={() => setSecure((s) => !s)} hitSlop={12} style={styles.trailingIcon}>
+                  <Ionicons name={secure ? "eye-off-outline" : "eye-outline"} size={20} color="#6b7280" />
                 </TouchableOpacity>
               </View>
 
-              {/* Forgot + Spacer */}
+              {/* Meta row */}
               <View style={styles.rowBetween}>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Ionicons name="shield-checkmark-outline" size={16} color="#64748b" />
+                  <Ionicons name="shield-checkmark-outline" size={16} color={MUTED} />
                   <Text style={styles.mutedSmall}>  Secured by ParkMate</Text>
                 </View>
                 <TouchableOpacity onPress={() => Alert.alert("Forgot password", "Please contact admin.")}>
@@ -152,9 +161,9 @@ export default function LoginOwner() {
                 </TouchableOpacity>
               </View>
 
-              {/* Log in */}
+              {/* Login */}
               <TouchableOpacity
-                style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
+                style={[styles.primaryBtn, loading && { opacity: 0.7 }]}
                 onPress={handleLogin}
                 disabled={loading}
                 activeOpacity={0.9}
@@ -162,113 +171,95 @@ export default function LoginOwner() {
                 {loading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <Ionicons name="log-in-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={styles.loginText}>Log in</Text>
-                  </View>
+                  <Text style={styles.primaryBtnText}>Log in</Text>
                 )}
               </TouchableOpacity>
 
               {/* Divider */}
               <View style={styles.orRow}>
                 <View style={styles.line} />
-                <Text style={styles.orText}>Or continue with</Text>
+                <Text style={styles.orText}>or continue with</Text>
                 <View style={styles.line} />
               </View>
 
-              {/* Google */}
-              <TouchableOpacity style={styles.googleBtn} activeOpacity={0.9}>
+              {/* Google (placeholder) */}
+              <TouchableOpacity style={styles.secondaryBtn} activeOpacity={0.9}>
                 <Image
                   style={styles.googleIcon}
                   source={require("../assets/images/google-logo.png")}
                 />
-                <Text style={styles.googleText}>Google</Text>
+                <Text style={styles.secondaryBtnText}>Google</Text>
               </TouchableOpacity>
 
-              {/* Footer */}
+              {/* Footer link */}
               <View style={styles.footer}>
                 <Text style={styles.footerText}>Don’t have an account? </Text>
                 <TouchableOpacity onPress={() => router.push("/Register_Owner")}>
-                  <Text style={styles.signup}>Sign up</Text>
+                  <Text style={styles.linkSmall}>Sign up</Text>
                 </TouchableOpacity>
               </View>
             </View>
-          </View>
 
-          {/* Bottom pad */}
-          <View style={{ height: 24 }} />
+            {/* Tiny tip */}
+            <View style={styles.tips}>
+              <Ionicons name="information-circle-outline" size={16} color={MUTED} />
+              <Text style={styles.tipsText}>Use your registered phone, email, or username.</Text>
+            </View>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-const CARD_BG = "#ffffff";
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0f172a" },
+  safe: { flex: 1, backgroundColor: BG },
 
-  heroWrap: { backgroundColor: "#0f172a" },
-  hero: { height: 260, width: "100%", justifyContent: "flex-end" },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(15,23,42,0.45)",
-  },
-  heroTextWrap: { paddingHorizontal: 24, paddingBottom: 22 , alignItems:'center' },
-  kicker: { color: "#e2e8f0", fontSize: 13, letterSpacing: 0.4 , fontWeight:'bold'},
-  title: { marginTop: 6, fontSize: 28, fontWeight: "800", color: "#ffffff" },
-  subtitle: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 18,
-    color: "#cfe2f9ff",
-    fontWeight:'bold'
-  },
+  /* HERO */
+  heroWrap: { height: 230, backgroundColor: "#000" },
+  hero: { flex: 1, justifyContent: "flex-end" },
+  heroImg: { opacity: 0.95 },
+  heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.12)" },
+  heroGradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "62%" },
+  heroTextWrap: { paddingHorizontal: 20, paddingBottom: 18, alignItems: "flex-start" },
+  kicker: { color: "#e0f2ff", fontSize: 12, marginBottom: 4 },
+  title: { color: "#fff", fontSize: 24, fontWeight: "800" },
+  subtitle: { color: "#dbeafe", fontSize: 12, marginTop: 4 },
 
-  cardWrap: {
-    marginTop: -10,
-    paddingHorizontal: 18,
-  },
+  /* CONTENT */
+  content: { paddingHorizontal: 16, marginTop: -28 },
   card: {
-    backgroundColor: CARD_BG,
-    borderRadius: 18,
-    padding: 18,
+    backgroundColor: SURFACE,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BORDER,
     shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
   },
-  
-linkSmall: {
-  color: "#2563eb",
-  fontSize: 12,
-  fontWeight: "700",
-},
 
   inputWrap: {
-    position: "relative",
-    marginBottom: 14,
-    backgroundColor: "#f8fafc",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  leftIcon: { position: "absolute", left: 14, top: 13 },
-  input: {
+    borderColor: BORDER,
+    paddingLeft: 12,
+    paddingRight: 12,
     height: 48,
-    fontSize: 15,
-    color: "#0f172a",
-    paddingHorizontal: 14,
+    marginBottom: 12,
   },
-  eyeBtn: {
-    position: "absolute",
-    right: 12,
-    top: 12,
-    height: 24,
-    width: 24,
-    alignItems: "center",
-    justifyContent: "center",
+  leadingIcon: {
+    width: 28, height: 28, borderRadius: 8,
+    backgroundColor: "#e6f5ff",
+    alignItems: "center", justifyContent: "center",
   },
+  trailingIcon: { paddingLeft: 8 },
+  input: { flex: 1, height: "100%", paddingHorizontal: 10, color: TEXT, fontSize: 15 },
 
   rowBetween: {
     marginTop: 2,
@@ -277,41 +268,39 @@ linkSmall: {
     alignItems: "center",
     justifyContent: "space-between",
   },
-  mutedSmall: { color: "#64748b", fontSize: 12 },
+  mutedSmall: { color: MUTED, fontSize: 12 },
 
-  loginBtn: {
-    height: 50,
-    backgroundColor: "#2563eb",
+  primaryBtn: {
+    height: 48,
+    backgroundColor: BLUE,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 10,
+    marginTop: 6,
   },
-  loginBtnDisabled: { opacity: 0.7 },
-  loginText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "800" },
 
-  orRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 18,
-    marginBottom: 12,
-  },
-  line: { flex: 1, height: 1, backgroundColor: "#e2e8f0" },
-  orText: { marginHorizontal: 10, color: "#6b7280", fontSize: 12 },
+  orRow: { flexDirection: "row", alignItems: "center", marginVertical: 14, paddingHorizontal: 6 },
+  line: { flex: 1, height: 1, backgroundColor: "#e5e7eb" },
+  orText: { marginHorizontal: 8, color: MUTED, fontSize: 12, textTransform: "uppercase" },
 
-  googleBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f1f5f9",
+  secondaryBtn: {
+    height: 46,
+    backgroundColor: "#f3f9ff",
     borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#d9ecff",
+    alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
   },
-  googleIcon: { width: 22, height: 22, marginRight: 10 },
-  googleText: { fontSize: 14, color: "#0f172a", fontWeight: "700" },
+  googleIcon: { width: 20, height: 20, marginRight: 8 },
+  secondaryBtnText: { color: BLUE, fontWeight: "800" },
 
   footer: { flexDirection: "row", justifyContent: "center", marginTop: 16 },
-  footerText: { fontSize: 13, color: "#64748b" },
-  signup: { fontSize: 13, fontWeight: "800", color: "#2563eb" },
+  footerText: { fontSize: 13, color: MUTED },
+  linkSmall: { fontSize: 13, fontWeight: "800", color: BLUE },
+
+  tips: { flexDirection: "row", alignItems: "center", marginTop: 12, alignSelf: "center" },
+  tipsText: { marginLeft: 6, color: MUTED, fontSize: 12 },
 });

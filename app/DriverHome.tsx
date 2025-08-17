@@ -1,25 +1,26 @@
 // app/driver/DriverHome.tsx
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from "react-native";
 import MapView, { Circle, MapPressEvent, Marker, Region } from "react-native-maps";
 
-// 👇 change to your LAN IP + folder
 const BASE_URL = "http://192.168.8.131/Parkmate";
 const SPACES_ENDPOINT = `${BASE_URL}/list_spaces_near.php`;
 
-// Wider default so the 5 km circle fits nicely
+// default map region (zoomed to show the radius ring nicely)
 const DEFAULT_REGION: Region = {
   latitude: 6.9022,
   longitude: 79.8607,
@@ -27,10 +28,9 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.09,
 };
 
-// 🔵 Circle shown on map = 5 km
-const CIRCLE_RADIUS_M = 5000;
-// (Optional) Radius used after pressing Show = 10 km (keep if you still use /LocationDetails)
-const SHOW_RADIUS_M = 10000;
+// Radius (meters)
+const CIRCLE_RADIUS_M = 5000;  // live radius
+const SHOW_RADIUS_M = 10000;   // optional larger radius when pressing "Show"
 
 type Space = {
   id: number;
@@ -60,16 +60,17 @@ export default function DriverHome() {
   const [loadingSpaces, setLoadingSpaces] = useState(false);
   const [spaces, setSpaces] = useState<Space[]>([]);
 
-  // Live location
+  // request permission + watch live location
   useEffect(() => {
     (async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== "granted") {
           setLoading(false);
-          Alert.alert("Location permission denied.");
+          Alert.alert("Permission required", "Location permission is needed to find nearby parking.");
           return;
         }
+
         const first = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
@@ -77,8 +78,7 @@ export default function DriverHome() {
         const lat = first.coords.latitude;
         const lng = first.coords.longitude;
 
-        // Zoom to fit the 5 km circle
-        const delta = (CIRCLE_RADIUS_M / 111_000) * 2.4; // rough degrees
+        const delta = (CIRCLE_RADIUS_M / 111_000) * 2.4; // rough degrees to frame circle
         const r: Region = {
           latitude: lat,
           longitude: lng,
@@ -104,7 +104,7 @@ export default function DriverHome() {
     };
   }, []);
 
-  // Fetch spaces whenever the live location changes – within **5 km**
+  // auto-fetch spaces on live location change (debounced)
   useEffect(() => {
     if (!userLoc) return;
     if (fetchTimer.current) clearTimeout(fetchTimer.current);
@@ -182,23 +182,23 @@ export default function DriverHome() {
       Alert.alert("No location", "Waiting for GPS fix…");
       return;
     }
-    // Optional: keep this if you want a separate screen with a larger radius
     router.push({
       pathname: "/LocationDetails",
       params: {
         lat: String(userLoc.latitude),
         lng: String(userLoc.longitude),
-        radius: String(SHOW_RADIUS_M), // 10 km
+        radius: String(SHOW_RADIUS_M),
       },
     });
   };
 
-  // ========= Big Markers (always red/green, no color change on press) =========
+  /* ---------- Presentational bits ---------- */
+
   const BigMarker = ({
     color,
     ringColor,
-    size = 28, // inner dot diameter
-    ring = 54, // outer ring diameter
+    size = 28,
+    ring = 54,
   }: {
     color: string;
     ringColor: string;
@@ -238,18 +238,71 @@ export default function DriverHome() {
     <BigMarker color="#16A34A" ringColor="rgba(22,163,74,0.35)" size={26} ring={50} />
   );
 
+  const recenter = () => {
+    if (!userLoc) {
+      Alert.alert("No location", "Waiting for GPS fix…");
+      return;
+    }
+    const delta = (CIRCLE_RADIUS_M / 111_000) * 2.4;
+    const r: Region = {
+      latitude: userLoc.latitude,
+      longitude: userLoc.longitude,
+      latitudeDelta: Math.max(delta, 0.06),
+      longitudeDelta: Math.max(delta, 0.06),
+    };
+    setRegion(r);
+    mapRef.current?.animateToRegion(r, 600);
+  };
+
+  const refresh = () => {
+    if (!userLoc) return;
+    fetchSpaces(userLoc.latitude, userLoc.longitude, CIRCLE_RADIUS_M);
+  };
+
+  const nearbyCount = spaces.length;
+  const minPrice = (() => {
+    const paid = spaces
+      .filter((s) => !s.is_free && s.price_amount != null)
+      .map((s) => s.price_amount as number);
+    if (!paid.length) return "—";
+    return `Rs ${Math.min(...paid)}+`;
+    // (just a hint; actual price shows on details)
+  })();
+
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.select({ ios: "padding" })}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Select Parking Location</Text>
-        </View>
+        {/* Gradient Header */}
+        <LinearGradient
+          colors={["#3B82F6", "#60A5FA"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.header}
+        >
+          <View style={styles.headerTopRow}>
+            <Ionicons name="navigate-outline" size={18} color="#fff" />
+            <Text style={styles.headerTitle}>Find Parking Near You</Text>
+            <View style={{ width: 18 }} />
+          </View>
 
-        
+          <View style={styles.headerChips}>
+            <View style={styles.chip}>
+              <View style={styles.liveDot} />
+              <Text style={styles.chipText}>Live</Text>
+            </View>
+            <View style={styles.chip}>
+              <Ionicons name="locate-outline" size={14} color="#fff" />
+              <Text style={styles.chipText}>Radius 5 km</Text>
+            </View>
+            <View style={styles.chip}>
+              <Ionicons name="pricetag-outline" size={14} color="#fff" />
+              <Text style={styles.chipText}>From {minPrice}</Text>
+            </View>
+          </View>
+        </LinearGradient>
 
-        {/* Map */}
-        <View style={styles.mapWrap}>
+        {/* Map container */}
+        <View style={styles.mapCard}>
           {loading ? (
             <View style={styles.mapLoader}>
               <ActivityIndicator size="large" />
@@ -262,17 +315,17 @@ export default function DriverHome() {
                 style={StyleSheet.absoluteFill}
                 initialRegion={region}
                 onPress={onMapPress}
-                showsUserLocation={false} // we render our own red marker
+                showsUserLocation={false}
                 showsMyLocationButton={false}
               >
-                {/* 🔴 live user + 5 km circle */}
+                {/* 🔴 You + ring */}
                 {userLoc && (
                   <>
                     <Marker
                       coordinate={userLoc}
                       title="You are here"
                       zIndex={999}
-                      tappable={false}         // 👈 no press color/ripple/changes
+                      tappable={false}
                       tracksViewChanges={false}
                     >
                       <RedBigMarker />
@@ -280,14 +333,14 @@ export default function DriverHome() {
                     <Circle
                       center={userLoc}
                       radius={CIRCLE_RADIUS_M}
-                      strokeColor="rgba(34,197,94,0.9)"
-                      fillColor="rgba(34,197,94,0.22)"
+                      strokeColor="rgba(59,130,246,0.9)"
+                      fillColor="rgba(59,130,246,0.18)"
                       strokeWidth={2}
                     />
                   </>
                 )}
 
-                {/* 🟢 spaces within 5 km */}
+                {/* 🟢 Spaces */}
                 {spaces.map((s) => (
                   <Marker
                     key={s.id}
@@ -299,7 +352,7 @@ export default function DriverHome() {
                         (s.distance_m != null ? ` • ${(s.distance_m / 1000).toFixed(2)} km` : "")
                     }
                     zIndex={10}
-                    tappable={false}           // 👈 keep the color stable even if tapped
+                    tappable={false}
                     tracksViewChanges={false}
                   >
                     <GreenBigMarker />
@@ -307,108 +360,147 @@ export default function DriverHome() {
                 ))}
               </MapView>
 
+
+              {/* Floating controls */}
+              <View style={styles.fabsCol}>
+                <TouchableOpacity style={styles.fabBtn} onPress={recenter} activeOpacity={0.9}>
+                  <Ionicons name="locate" size={18} color="#111827" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.fabBtn, { marginTop: 10 }]}
+                  onPress={refresh}
+                  disabled={loadingSpaces}
+                  activeOpacity={0.9}
+                >
+                  {loadingSpaces ? (
+                    <ActivityIndicator />
+                  ) : (
+                    <Ionicons name="refresh" size={18} color="#111827" />
+                  )}
+                </TouchableOpacity>
+              </View>
+
               {/* Legend */}
               <View style={styles.legend}>
                 <View style={styles.legendRow}>
                   <View style={[styles.legendDot, { backgroundColor: "#EF4444" }]} />
-                  <Text style={styles.legendText}>Your live location</Text>
+                  <Text style={styles.legendText}>You</Text>
                 </View>
                 <View style={styles.legendRow}>
                   <View style={[styles.legendDot, { backgroundColor: "#16A34A" }]} />
-                  <Text style={styles.legendText}>Parking spaces</Text>
+                  <Text style={styles.legendText}>Parking</Text>
                 </View>
                 <View style={[styles.legendRow, { marginTop: 4 }]}>
                   <View
                     style={[
                       styles.swatch,
-                      { borderColor: "rgba(34,197,94,0.9)", backgroundColor: "rgba(34,197,94,0.22)" },
+                      { borderColor: "rgba(59,130,246,0.9)", backgroundColor: "rgba(59,130,246,0.18)" },
                     ]}
                   />
-                  <Text style={styles.legendText}>Radius (5 km)</Text>
+                  <Text style={styles.legendText}>5 km</Text>
                 </View>
               </View>
             </>
           )}
         </View>
 
-        {/* Bottom bar */}
-        <View style={styles.bottomBar}>
-          <TouchableOpacity
-            style={[styles.primaryBtn, (loadingSpaces || !userLoc) && { opacity: 0.7 }]}
-            onPress={onShow}
-            disabled={loadingSpaces || !userLoc}
-            activeOpacity={0.9}
-          >
-            <Text style={styles.primaryBtnText}>{loadingSpaces ? "Loading spaces…" : "Show"}</Text>
-          </TouchableOpacity>
+        {/* Bottom summary card */}
+        <View style={styles.bottomWrap}>
+          <View style={styles.bottomCard}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.bottomTitle}>{nearbyCount} space{nearbyCount === 1 ? "" : "s"} nearby</Text>
+              <Text style={styles.bottomSub}>
+                {userLoc ? "Live within 5 km radius" : "Waiting for GPS…"}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.primaryBtn, (loadingSpaces || !userLoc) && { opacity: 0.7 }]}
+              onPress={onShow}
+              disabled={loadingSpaces || !userLoc}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.primaryBtnText}>{loadingSpaces ? "Loading…" : "Show"}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
+/* ===== Styles ===== */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: "#F5F7FB" },
 
+  /* Header */
   header: {
-    backgroundColor: "#44A6FF",
     paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderBottomLeftRadius: 8,
-    borderBottomRightRadius: 8,
+    paddingTop: 14,
+    paddingBottom: 16,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    elevation: 2,
   },
+  headerTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  headerChips: { flexDirection: "row", gap: 8, marginTop: 10 },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.35)",
+  },
+  chipText: { color: "#fff", fontWeight: "700", fontSize: 12 },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#22c55e" },
 
-  searchRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, marginTop: 12, gap: 10 },
-  searchInputWrap: {
+  /* Map card */
+  mapCard: {
     flex: 1,
+    marginTop: 12,
+    marginHorizontal: 12,
+    borderRadius: 18,
+    overflow: "hidden",
     backgroundColor: "#fff",
-    borderRadius: 24,
     borderWidth: 1,
     borderColor: "#E5E7EB",
-    paddingHorizontal: 14,
-    height: 44,
-    justifyContent: "center",
+    elevation: 1,
   },
-  searchInput: { color: "#111827" },
-  searchBtn: {
-    backgroundColor: "#44A6FF",
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  searchBtnText: { color: "#fff", fontWeight: "700" },
-
-  mapWrap: { flex: 1, marginTop: 12, marginHorizontal: 12, borderRadius: 12, overflow: "hidden" },
   mapLoader: { flex: 1, alignItems: "center", justifyContent: "center" },
 
-  // Custom markers
-  markerWrap: {
+
+  // Floating buttons
+  fabsCol: {
+    position: "absolute",
+    right: 12,
+    bottom: 110,
+  },
+  fabBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
     alignItems: "center",
     justifyContent: "center",
-  },
-  markerDot: {
-    borderWidth: 2,
-    borderColor: "#fff",
+    elevation: 3,
     shadowColor: "#000",
-    shadowOpacity: 0.35,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 4,
-  },
-  markerRing: {
-    position: "absolute",
-    borderWidth: 2,
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
 
   // Legend
   legend: {
     position: "absolute",
-    top: 12,
+    top: 70,
     right: 12,
-    backgroundColor: "rgba(255,255,255,0.95)",
+    backgroundColor: "rgba(255,255,255,0.96)",
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
@@ -418,21 +510,51 @@ const styles = StyleSheet.create({
   legendRow: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 2 },
   legendText: { color: "#111827", fontSize: 12 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
+  swatch: { width: 16, height: 10, borderRadius: 4, borderWidth: 1 },
 
-  bottomBar: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#fff" },
+  // Custom markers
+  markerWrap: { alignItems: "center", justifyContent: "center" },
+  markerDot: {
+    borderWidth: 2,
+    borderColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 4,
+  },
+  markerRing: { position: "absolute", borderWidth: 2 },
+
+  // Bottom summary
+  bottomWrap: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "transparent" },
+  bottomCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    elevation: 1,
+  },
+  bottomTitle: { color: "#111827", fontWeight: "800" },
+  bottomSub: { color: "#6B7280", fontSize: 12, marginTop: 2 },
+
   primaryBtn: {
-    backgroundColor: "#2F80ED",
-    height: 50,
-    borderRadius: 26,
+    backgroundColor: "#2563EB",
+    height: 44,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#2F80ED",
-    shadowOpacity: 0.2,
+    paddingHorizontal: 18,
+    minWidth: 110,
+    shadowColor: "#2563EB",
+    shadowOpacity: 0.15,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
-  primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-
-  swatch: { width: 16, height: 10, borderRadius: 4, borderWidth: 1 },
+  primaryBtnText: { color: "#fff", fontSize: 15, fontWeight: "800" },
 });
