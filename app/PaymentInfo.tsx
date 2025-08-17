@@ -1,3 +1,4 @@
+// app/PaymentInfo.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -9,6 +10,15 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+/** ===== THEME ===== */
+const BLUE = "#0099ff";
+const BG = "#f6f7fb";
+const CARD = "#ffffff";
+const BORDER = "#e6e9f2";
+const TEXT = "#0f172a";
+const MUTED = "#6b7280";
 
 /** ===== API (edit IP only) ===== */
 const API_BASE = "http://192.168.8.131/Parkmate";
@@ -44,10 +54,8 @@ type SessionRow = {
 };
 
 /** ===== Helpers (robust time) ===== */
-/** Parse MySQL DATETIME ("YYYY-MM-DD HH:MM:SS") as LOCAL time */
 const parseSqlDateLocal = (s: string) => {
-  // Ensure ISO-like with 'T', no 'Z' so JS treats it as local time
-  const isoLike = s.replace(" ", "T");
+  const isoLike = s.replace(" ", "T"); // treat as local time
   return new Date(isoLike);
 };
 
@@ -56,8 +64,6 @@ const fmtLocalTime = (d: Date) =>
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
-    // If you want to force SL time on all devices:
-    // timeZone: "Asia/Colombo",
   })
     .format(d)
     .replace("AM", "am")
@@ -65,17 +71,16 @@ const fmtLocalTime = (d: Date) =>
 
 const ceil = (n: number) => Math.ceil(n);
 
-/** Use Date objects to avoid parsing inconsistencies */
 function computeDurationByDate(start: Date, end: Date) {
   const ms = Math.max(0, end.getTime() - start.getTime());
   const mins = Math.round(ms / 60000);
-  const hrsRounded = Math.max(1, ceil(mins / 60)); // round up to next hour min=1
+  const hrsRounded = Math.max(1, ceil(mins / 60)); // round up to next hour
   const pretty = mins < 60 ? `${mins} mins` : `${hrsRounded} ${hrsRounded === 1 ? "hr" : "hrs"}`;
   return { mins, hrsRounded, pretty };
 }
+
 const toMoney = (n: number) => `Rs.${n.toFixed(0)}`;
 
-/** ===== Screen ===== */
 export default function PaymentInfo() {
   const router = useRouter();
   const { details } = useLocalSearchParams<PaymentParams>();
@@ -94,7 +99,6 @@ export default function PaymentInfo() {
   const [openTop, setOpenTop] = useState(true);
   const [openInfo, setOpenInfo] = useState(true);
 
-  // fetch session (vehicles) + pricing (space_details)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -118,7 +122,7 @@ export default function PaymentInfo() {
             pricing_text: pJ?.pricing_text ?? null,
           });
         }
-      } catch (e) {
+      } catch {
         if (mounted) {
           setSession(null);
           setPricing({ is_free: true, price_amount: null, price_unit: null, pricing_text: "Free" });
@@ -127,28 +131,23 @@ export default function PaymentInfo() {
         if (mounted) setLoading(false);
       }
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [payload]);
 
   if (!payload) {
     return (
-      <View style={styles.center}>
+      <SafeAreaView style={[styles.safe, styles.center]}>
         <Text style={{ color: "#b91c1c", fontWeight: "800" }}>Missing payment details</Text>
         <TouchableOpacity style={[styles.primaryBtn, { marginTop: 16 }]} onPress={() => router.back()}>
           <Text style={styles.primaryText}>Go Back</Text>
         </TouchableOpacity>
-      </View>
+      </SafeAreaView>
     );
   }
 
   // Build Date objects safely
-  const startDate =
-    session?.start_time ? parseSqlDateLocal(session.start_time) : new Date();
-  const endDate =
-    (session?.end_time ? parseSqlDateLocal(session.end_time) : null) || new Date();
-
+  const startDate = session?.start_time ? parseSqlDateLocal(session.start_time) : new Date();
+  const endDate = (session?.end_time ? parseSqlDateLocal(session.end_time) : null) || new Date();
   const { mins, hrsRounded, pretty } = computeDurationByDate(startDate, endDate);
 
   const rateLabel =
@@ -161,7 +160,7 @@ export default function PaymentInfo() {
   let total = 0;
   if (!pricing?.is_free && pricing?.price_amount != null && pricing?.price_unit) {
     if (pricing.price_unit === "hour") {
-      total = hrsRounded * pricing.price_amount; // round up to next hour
+      total = hrsRounded * pricing.price_amount;
     } else {
       const daysRounded = Math.max(1, ceil(mins / (60 * 24)));
       total = daysRounded * pricing.price_amount;
@@ -169,143 +168,255 @@ export default function PaymentInfo() {
   }
 
   return (
-    <>
+    <SafeAreaView style={styles.safe}>
       <Stack.Screen
         options={{
           headerShown: true,
           title: "Payment Info",
           headerTitleStyle: { fontWeight: "800", color: "#fff" },
-          headerStyle: { backgroundColor: "#3B82F6" },
+          headerStyle: { backgroundColor: BLUE },
           headerTintColor: "#fff",
+          headerShadowVisible: false,
+          // keep default back arrow (no headerLeft override)
           headerRight: () => (
             <View style={styles.avatar}>
-              <Ionicons name="person" color="#1E3A8A" size={16} />
+              <Ionicons name="person" color={BLUE} size={16} />
             </View>
           ),
-          headerLeft: () => <Ionicons name="ellipsis-vertical" color="#fff" size={18} />,
         }}
       />
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
-        {/* Total time card */}
-        <View style={styles.card}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.h1}>Total Parking Time</Text>
-            <Ionicons name="card-outline" size={20} color="#111827" />
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 28 }}>
+        {/* TOTAL CARD */}
+        <View style={styles.totalCard}>
+          <View style={styles.totalTopRow}>
+            <Text style={styles.totalLabel}>Total</Text>
+            <View style={styles.rateChip}>
+              <Ionicons name={pricing?.is_free ? "gift-outline" : "cash-outline"} size={14} color="#fff" />
+              <Text style={styles.rateChipText}>{rateLabel}</Text>
+            </View>
           </View>
 
-          <Text style={styles.bigTime}>{pretty}</Text>
+          <Text style={styles.totalAmount}>
+            {pricing?.is_free ? "Rs.0" : toMoney(total)}
+          </Text>
 
-          <View style={styles.rateRow}>
-            <View style={styles.rateChip}>
-              <Text style={styles.rateText}>{rateLabel}</Text>
+          <View style={styles.timeRow}>
+            <View style={styles.timeBadge}>
+              <Ionicons name="time-outline" size={14} color={TEXT} />
+              <Text style={styles.timeBadgeText}>{pretty}</Text>
             </View>
+
             <TouchableOpacity onPress={() => setOpenTop((v) => !v)} style={styles.chevBtn}>
-              <Ionicons name={openTop ? "chevron-up" : "chevron-down"} size={18} color="#6B7280" />
+              <Ionicons name={openTop ? "chevron-up" : "chevron-down"} size={18} color="#e6f2ff" />
             </TouchableOpacity>
           </View>
 
           {openTop && session && (
-            <Text style={styles.muted}>
-              #{session.id} • {session.vehicle_no} • {session.category.replace(/s$/, "")}
-            </Text>
+            <View style={styles.metaRow}>
+              <Ionicons name="pricetag-outline" size={14} color="#e6f2ff" />
+              <Text style={styles.metaText}>
+                #{session.id} • {session.vehicle_no} • {session.category?.replace(/s$/, "")}
+              </Text>
+            </View>
           )}
         </View>
 
-        {/* Info section */}
-        <TouchableOpacity style={styles.sectionHead} onPress={() => setOpenInfo((v) => !v)} activeOpacity={0.85}>
-          <Text style={styles.sectionTitle}>Info</Text>
-          <Ionicons name={openInfo ? "chevron-up" : "chevron-down"} size={18} color="#6B7280" />
+        {/* INFO SECTION HEADER */}
+        <TouchableOpacity style={styles.sectionHead} onPress={() => setOpenInfo((v) => !v)} activeOpacity={0.88}>
+          <View style={styles.sectionTitleRow}>
+            <Ionicons name="information-circle-outline" size={18} color={TEXT} />
+            <Text style={styles.sectionTitle}>Details</Text>
+          </View>
+          <Ionicons name={openInfo ? "chevron-up" : "chevron-down"} size={18} color={MUTED} />
         </TouchableOpacity>
 
+        {/* INFO CARD */}
         {openInfo && (
           <View style={styles.card}>
-            <View style={styles.rowItem}>
-              <Text style={styles.label}>Vehicle Type</Text>
-              <Text style={styles.value}>{session?.category?.replace(/s$/, "") || "-"}</Text>
-            </View>
-            <View style={styles.rowItem}>
-              <Text style={styles.label}>Arrival Time</Text>
-              <Text style={styles.value}>{fmtLocalTime(startDate)}</Text>
-            </View>
-            <View style={styles.rowItem}>
-              <Text style={styles.label}>Leave Time</Text>
-              <Text style={styles.value}>{fmtLocalTime(endDate)}</Text>
-            </View>
+            <Row label="Vehicle Type" value={session?.category?.replace(/s$/, "") || "-"} icon="car-outline" />
+            <Row label="Arrival Time" value={fmtLocalTime(startDate)} icon="log-in-outline" />
+            <Row label="Leave Time" value={fmtLocalTime(endDate)} icon="log-out-outline" />
           </View>
         )}
 
-        {/* Total Amount */}
+        {/* BREAKDOWN CARD (optional visual context) */}
         <View style={styles.card}>
-          <View style={styles.rowItem}>
-            <Text style={[styles.label, { fontWeight: "800" }]}>Total Amount</Text>
-            {loading ? (
-              <ActivityIndicator />
-            ) : (
-              <Text style={[styles.value, { fontWeight: "900" }]}>
-                {pricing?.is_free ? "Rs.0" : toMoney(total)}
-              </Text>
-            )}
-          </View>
+          <LabelValue label="Rate applied" value={rateLabel} />
+          <LabelValue
+            label="Duration billed"
+            value={
+              pricing?.is_free
+                ? "0"
+                : pricing?.price_unit === "day"
+                ? `${Math.max(1, ceil(mins / (60 * 24)))} day(s)`
+                : `${hrsRounded} hr(s)`
+            }
+          />
+          <LabelValue
+            label="Total amount"
+            value={pricing?.is_free ? "Rs.0" : toMoney(total)}
+            strong
+          />
         </View>
 
-        {/* OK button */}
+        {/* ACTION */}
         <TouchableOpacity
-          style={[styles.primaryBtn, { alignSelf: "center", marginTop: 8 }]}
+          style={[styles.primaryBtn, { alignSelf: "center", marginTop: 6 }]}
           onPress={() => router.back()}
           activeOpacity={0.9}
         >
-          <Text style={styles.primaryText}>Ok</Text>
+          <Text style={styles.primaryText}>Done</Text>
         </TouchableOpacity>
       </ScrollView>
-    </>
+
+      {/* Inline loader for total when fetching */}
+      {loading && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="small" color="#fff" />
+          <Text style={{ color: "#fff", marginTop: 6 }}>Calculating…</Text>
+        </View>
+      )}
+    </SafeAreaView>
+  );
+}
+
+/* ========= tiny presentational helpers ========= */
+function Row({ label, value, icon }: { label: string; value: string; icon: keyof typeof Ionicons.glyphMap }) {
+  return (
+    <View style={styles.rowItem}>
+      <View style={styles.rowLeft}>
+        <View style={styles.rowIcon}>
+          <Ionicons name={icon} size={14} color={BLUE} />
+        </View>
+        <Text style={styles.rowLabel}>{label}</Text>
+      </View>
+      <Text style={styles.rowValue}>{value}</Text>
+    </View>
+  );
+}
+function LabelValue({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <View style={styles.lvRow}>
+      <Text style={styles.lvLabel}>{label}</Text>
+      <Text style={[styles.lvValue, strong && { fontWeight: "900", color: TEXT }]}>{value}</Text>
+    </View>
   );
 }
 
 /* ===== styles ===== */
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  safe: { flex: 1, backgroundColor: BG },
+
+  center: { alignItems: "center", justifyContent: "center" },
 
   avatar: {
     width: 30, height: 30, borderRadius: 15,
-    backgroundColor: "#E0E7FF",
+    backgroundColor: "#eaf2ff",
     alignItems: "center", justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth, borderColor: "#c7d2fe",
-    marginRight: 6,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfe4ff",
+    marginRight: 8,
   },
 
+  /* Total Card (hero) */
+  totalCard: {
+    backgroundColor: BLUE,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  totalTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  totalLabel: { color: "#e6f2ff", fontWeight: "800", letterSpacing: 0.3 },
+  rateChip: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 999,
+  },
+  rateChipText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+
+  totalAmount: { color: "#fff", fontSize: 32, fontWeight: "900", marginTop: 8 },
+
+  timeRow: { flexDirection: "row", alignItems: "center", marginTop: 10 },
+  timeBadge: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "#eaf2ff",
+    paddingVertical: 6, paddingHorizontal: 10,
+    borderRadius: 999,
+  },
+  timeBadgeText: { color: TEXT, fontWeight: "800" },
+  chevBtn: { marginLeft: "auto", padding: 6 },
+
+  metaRow: { flexDirection: "row", alignItems: "center", marginTop: 8, gap: 8 },
+  metaText: { color: "#e6f2ff", fontWeight: "700" },
+
+  /* Section header */
+  sectionHead: {
+    backgroundColor: CARD,
+    borderColor: BORDER,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+    paddingVertical: 12, paddingHorizontal: 12,
+    marginBottom: 10,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+  },
+  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  sectionTitle: { fontWeight: "800", color: TEXT, fontSize: 14 },
+
+  /* Cards */
   card: {
-    backgroundColor: "#fff",
+    backgroundColor: CARD,
     borderRadius: 16,
     padding: 14,
-    borderColor: "#E5E7EB",
+    borderColor: BORDER,
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 12,
   },
-  h1: { fontSize: 14, fontWeight: "800", color: "#111827" },
-  bigTime: { fontSize: 26, fontWeight: "900", color: "#111827", marginTop: 6 },
-  muted: { marginTop: 8, color: "#6B7280" },
-  rateRow: { flexDirection: "row", alignItems: "center", marginTop: 10 },
-  rateChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: "#D1FAE5" },
-  rateText: { color: "#065F46", fontWeight: "800", fontSize: 12 },
-  chevBtn: { marginLeft: "auto", padding: 6 },
 
-  sectionHead: {
-    backgroundColor: "#F3F4F6",
-    borderRadius: 10,
+  /* Info rows */
+  rowItem: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
   },
-  sectionTitle: { fontWeight: "800", color: "#111827", fontSize: 14, flex: 1 },
+  rowLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  rowIcon: {
+    width: 26, height: 26, borderRadius: 8,
+    backgroundColor: "#eaf7ff",
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "#d7ecff",
+  },
+  rowLabel: { color: MUTED, fontWeight: "800" },
+  rowValue: { color: TEXT, fontWeight: "800" },
 
-  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  rowItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 8 },
-  label: { color: "#4B5563" },
-  value: { color: "#111827", fontWeight: "700" },
+  /* Breakdown rows */
+  lvRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 8 },
+  lvLabel: { color: MUTED, fontWeight: "700" },
+  lvValue: { color: TEXT, fontWeight: "800" },
 
-  primaryBtn: { backgroundColor: "#3B82F6", paddingHorizontal: 28, paddingVertical: 12, borderRadius: 999 },
+  /* Buttons */
+  primaryBtn: {
+    backgroundColor: BLUE,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   primaryText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+
+  /* Loader overlay */
+  loadingOverlay: {
+    position: "absolute",
+    right: 16, bottom: 24,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

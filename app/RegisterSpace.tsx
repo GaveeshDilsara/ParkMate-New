@@ -1,9 +1,9 @@
+// app/RegisterSpace.tsx
 import { Ionicons } from "@expo/vector-icons";
-import { Stack, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
   Alert,
-  Dimensions,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -13,15 +13,18 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-const { width } = Dimensions.get("window");
+const STEP = 1;
+const TOTAL_STEPS = 2;
+const PROGRESS = STEP / TOTAL_STEPS;
 
 const palette = {
-  primary: "#0EA5E9",
-  primaryDark: "#0284C7",
+  primary: "#0099ff",
+  primaryDark: "#007ddd",
   background: "#F5F6FA",
   surface: "#FFFFFF",
   text: "#0F172A",
@@ -33,6 +36,11 @@ const palette = {
 export default function RegisterSpace() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const isTablet = Math.max(width, height) >= 900;
+
+  const contentMax = isTablet ? 720 : undefined;
+  const imgSize = Math.min(Math.round(width * 0.28), isTablet ? 140 : 110);
 
   const [fullName, setFullName] = useState("");
   const [contact, setContact] = useState("");
@@ -41,10 +49,7 @@ export default function RegisterSpace() {
   const [address, setAddress] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const imgSize = Math.min(Math.round(width * 0.28), 110);
-
   const handleSubmit = async () => {
-    // (Light) validation – feel free to adjust
     const _fullName = fullName.trim();
     const _contact = contact.trim().replace(/\D/g, "");
     const _email = email.trim().toLowerCase();
@@ -67,30 +72,26 @@ export default function RegisterSpace() {
 
     try {
       setSaving(true);
-
-      // 🔁 CHANGE the IP/host to your XAMPP machine (or use ngrok/cloudflared URL)
-// inside handleSubmit
-const res = await fetch("http://192.168.8.131/ParkMate/save_SpaceOwner_details.php", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    fullName: _fullName,
-    contact: _contact,
-    email: _email,
-    nic: _nic,
-    address: _address,
-  }),
-});
-
+      const res = await fetch(
+        "http://192.168.8.131/ParkMate/save_SpaceOwner_details.php",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fullName: _fullName,
+            contact: _contact,
+            email: _email,
+            nic: _nic,
+            address: _address,
+          }),
+        }
+      );
 
       const raw = await res.text();
       let data: any = null;
       try { data = JSON.parse(raw); } catch {}
 
-      if (!res.ok) {
-        const msg = data?.message || `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
       if (data?.success) {
         Alert.alert("Saved", "Owner details saved successfully.", [
@@ -108,87 +109,88 @@ const res = await fetch("http://192.168.8.131/ParkMate/save_SpaceOwner_details.p
 
   return (
     <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle="light-content" backgroundColor={palette.primary} />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
+      {/* Compact App Bar */}
+      <View style={[styles.appbar, { paddingTop: insets.top }]}>
+        <TouchableOpacity style={styles.appbarBtn} onPress={() => router.back()} activeOpacity={0.9}>
+          <Ionicons name="arrow-back" size={18} color="#fff" />
+        </TouchableOpacity>
+
+        <View style={styles.appbarCenter}>
+          <RNText style={styles.appbarTitle}>Owner details</RNText>
+          <RNText style={styles.appbarSub}>We’ll use these for verification and contact.</RNText>
+        </View>
+
+        <View style={styles.stepPill}>
+          <RNText style={styles.stepText}>Step {STEP}/{TOTAL_STEPS}</RNText>
+        </View>
+      </View>
+
+      {/* Progress line */}
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${PROGRESS * 100}%` }]} />
+      </View>
+
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 110 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 120 }}
         >
-          {/* Header */}
-          <View style={[styles.headerWrapper, { paddingTop: insets.top }]}>
-            <View style={styles.toolbar}>
-              <TouchableOpacity
-                style={styles.toolBtn}
-                onPress={() => router.back()}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="arrow-back" size={18} color="#fff" />
-              </TouchableOpacity>
-
-              <View style={styles.titleWrap}>
-                <RNText style={styles.title} numberOfLines={2}>
-                  {"Got a spot?\nLet drivers find it"}
-                </RNText>
-              </View>
-
-              <View style={styles.toolBtn} />
-            </View>
-          </View>
-
           {/* Content */}
-          <View style={styles.content}>
+          <View style={[styles.content, { maxWidth: contentMax, alignSelf: "center", width: "100%" }]}>
             <RNText style={styles.sectionTitle}>Owner Details</RNText>
 
+            {/* Card with icon inputs */}
             <View style={styles.card}>
-              <TextInput
+              <Field
+                icon="person-outline"
                 placeholder="Full Name (Landowner / Parking space provider)"
-                placeholderTextColor={palette.textMuted}
-                style={styles.input}
                 value={fullName}
                 onChangeText={setFullName}
               />
-              <TextInput
+              <Field
+                icon="call-outline"
                 placeholder="Contact number"
-                placeholderTextColor={palette.textMuted}
                 keyboardType="number-pad"
-                style={styles.input}
                 value={contact}
-                onChangeText={(v) => setContact(v.replace(/\D/g, ""))}
+                onChangeText={(v: string) => setContact(v.replace(/\D/g, ""))}
                 maxLength={10}
               />
-              <TextInput
+              <Field
+                icon="mail-outline"
                 placeholder="Email Address"
-                placeholderTextColor={palette.textMuted}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                style={styles.input}
                 value={email}
                 onChangeText={setEmail}
               />
-              <TextInput
+              <Field
+                icon="document-text-outline"
                 placeholder="NIC / ID Number"
-                placeholderTextColor={palette.textMuted}
-                style={styles.input}
                 value={nic}
                 onChangeText={setNic}
               />
-              <TextInput
+              <Field
+                icon="home-outline"
                 placeholder="Residential Address"
-                placeholderTextColor={palette.textMuted}
-                style={[styles.input, { height: 72 }]}
                 value={address}
                 onChangeText={setAddress}
                 multiline
+                height={84}
               />
+
+              <View style={styles.helperRow}>
+                <Ionicons name="information-circle-outline" size={16} color={palette.primary} />
+                <RNText style={styles.helperText}>
+                  Make sure your email and phone are active — admins may contact you.
+                </RNText>
+              </View>
             </View>
 
+            {/* Decorative images */}
             <View style={styles.bottomImages}>
               <Image
                 source={require("../assets/images/owner1.png")}
@@ -204,64 +206,91 @@ const res = await fetch("http://192.168.8.131/ParkMate/save_SpaceOwner_details.p
 
         {/* Sticky Next Button */}
         <TouchableOpacity
-          style={[styles.nextButton, { bottom: insets.bottom + 18 }]}
+          style={[styles.nextButton, { bottom: insets.bottom + 18, left: 20, right: 20 }]}
           activeOpacity={0.9}
           onPress={handleSubmit}
           disabled={saving}
         >
           <RNText style={styles.nextButtonText}>{saving ? "Saving..." : "Next"}</RNText>
+          <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 8 }} />
         </TouchableOpacity>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
+/* ---------- Reusable field with left icon ---------- */
+function Field({
+  icon,
+  height,
+  ...rest
+}: any & { icon: any; height?: number }) {
+  return (
+    <View style={styles.inputWrap}>
+      <Ionicons name={icon} size={18} color={palette.textMuted} style={styles.leftIcon} />
+      <TextInput
+        placeholderTextColor={palette.textMuted}
+        style={[styles.input, styles.inputWithIcon, height ? { height } : null]}
+        {...rest}
+      />
+    </View>
+  );
+}
+
+/* ---------- Styles ---------- */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.background },
-  headerWrapper: {
+
+  /* Compact App Bar */
+  appbar: {
     backgroundColor: palette.primary,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-  },
-  toolbar: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minHeight: 50,
+    paddingHorizontal: 14,
+    paddingBottom: 10,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
   },
-  toolBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
+  appbarBtn: {
+    height: 36, width: 36, borderRadius: 10,
+    alignItems: "center", justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.18)",
   },
-  titleWrap: { flex: 1, alignItems: "center", paddingHorizontal: 8 },
-  title: {
-    color: "#fff",
-    textAlign: "center",
-    fontWeight: "800",
-    fontSize: 18,
-    lineHeight: 20,
+  appbarCenter: { flex: 1, marginHorizontal: 10 },
+  appbarTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  appbarSub: { color: "#EAF6FF", fontSize: 12, marginTop: 2 },
+  stepPill: {
+    paddingHorizontal: 10, height: 28, borderRadius: 999,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
   },
-  content: { paddingHorizontal: 20, paddingTop: 14 },
+  stepText: { color: "#fff", fontWeight: "700", fontSize: 12 },
+
+  /* Progress */
+  progressTrack: { height: 3, backgroundColor: "#DCE9FF" },
+  progressFill: { height: 3, backgroundColor: "#fff" },
+
+  /* Content */
+  content: { paddingHorizontal: 18, paddingTop: 14 },
   sectionTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: palette.text,
-    textAlign: "center",
-    marginBottom: 18,
+    fontSize: 20, fontWeight: "800", color: palette.text,
+    textAlign: "center", marginBottom: 14,
   },
+
+  /* Card */
   card: {
     backgroundColor: palette.surface,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
     borderColor: palette.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
+
+  inputWrap: { position: "relative", marginBottom: 10 },
+  leftIcon: { position: "absolute", left: 14, top: 16 },
   input: {
     backgroundColor: palette.inputBg,
     borderRadius: 12,
@@ -269,27 +298,33 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 14,
     minHeight: 52,
-    marginBottom: 10,
     color: palette.text,
     borderWidth: 1,
     borderColor: palette.border,
   },
+  inputWithIcon: { paddingLeft: 44 },
+
+  helperRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },
+  helperText: { marginLeft: 6, color: palette.textMuted, fontSize: 12, flex: 1 },
+
   bottomImages: {
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "center",
-    marginTop: 16,
+    marginTop: 18,
     marginBottom: 10,
   },
   icon: { resizeMode: "contain", backgroundColor: "#EAF2FF", borderRadius: 14 },
+
   nextButton: {
     position: "absolute",
-    right: 20,
-    alignSelf: "center",
     backgroundColor: palette.primaryDark,
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 24,
+    paddingHorizontal: 18, paddingVertical: 12,
+    borderRadius: 16,
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    elevation: 8,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2, shadowRadius: 8,
   },
-  nextButtonText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  nextButtonText: { color: "#fff", fontWeight: "800", fontSize: 15 },
 });

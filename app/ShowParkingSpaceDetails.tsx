@@ -11,12 +11,14 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 type VehicleKind = "Cars" | "Vans" | "Bikes" | "Buses";
 type AvailabilitySlot = { day?: string; start?: string; end?: string };
@@ -37,19 +39,29 @@ type Space = {
   pricing_text: string | null;
 };
 
-/** ===== API CONFIG (change IP) ===== */
+/** ===== THEME ===== */
+const BLUE = "#0099ff";
+const SURFACE = "#ffffff";
+const BG = "#f6f7fb";
+const BORDER = "#e6e9f2";
+const TEXT = "#0f172a";
+const MUTED = "#64748b";
+
+/** ===== API CONFIG (change IP only) ===== */
 const API_BASE = "http://192.168.8.131/Parkmate";
 const VEHICLES_API = `${API_BASE}/vehicles_api.php`;
 
 const ORDER: VehicleKind[] = ["Cars", "Vans", "Bikes", "Buses"];
+
+// Icons + chip colors per category
 const ICON_META: Record<
   VehicleKind,
-  { icon: keyof typeof Ionicons.glyphMap; color: string; label: string; bg: string }
+  { icon: keyof typeof Ionicons.glyphMap; color: string; label: string; chipBg: string; chipBorder: string }
 > = {
-  Cars:  { icon: "car-sport-outline", color: "#1D4ED8", label: "Car",  bg: "#E0E7FF" },
-  Vans:  { icon: "car-outline",       color: "#0284C7", label: "Van",  bg: "#DBEAFE" },
-  Bikes: { icon: "bicycle-outline",   color: "#16A34A", label: "Bike", bg: "#DCFCE7" },
-  Buses: { icon: "bus-outline",       color: "#D97706", label: "Bus",  bg: "#FEF3C7" },
+  Cars:  { icon: "car-outline",       color: "#0ea5e9", label: "Cars",  chipBg: "#eaf7ff", chipBorder: "#cfe9ff" },
+  Vans:  { icon: "car-sport",         color: "#3b82f6", label: "Vans",  chipBg: "#eaf2ff", chipBorder: "#d3e0ff" },
+  Bikes: { icon: "bicycle-outline",   color: "#10b981", label: "Bikes", chipBg: "#eafaf3", chipBorder: "#c9f2dc" },
+  Buses: { icon: "bus-outline",       color: "#f59e0b", label: "Buses", chipBg: "#fff4e5", chipBorder: "#ffe5bf" },
 };
 
 // time helpers
@@ -58,7 +70,7 @@ const to12hCompact = (hhmm?: string) => {
   const [H, M] = hhmm.split(":").map((n) => parseInt(n, 10));
   const am = H < 12;
   const h12 = ((H + 11) % 12) + 1;
-  return `${h12}.${String(M).padStart(2, "0")}${am ? "AM" : "PM"}`;
+  return `${h12}:${String(M).padStart(2, "0")} ${am ? "AM" : "PM"}`;
 };
 const nowHHMM = () => {
   const d = new Date();
@@ -66,10 +78,16 @@ const nowHHMM = () => {
 };
 function computeDailyWindow(availability: AvailabilitySlot[]) {
   const starts: string[] = [], ends: string[] = [];
-  for (const s of availability || []) { if (s.start) starts.push(s.start); if (s.end) ends.push(s.end); }
+  for (const s of availability || []) {
+    if (s.start) starts.push(s.start);
+    if (s.end) ends.push(s.end);
+  }
+  if (!starts.length || !ends.length) {
+    return { label: "Open Hours", range: "Hours vary" };
+  }
   starts.sort(); ends.sort();
   const start = starts[0], end = ends[ends.length - 1];
-  return { label: "Open Daily", range: start && end ? `${to12hCompact(start)} - ${to12hCompact(end)}` : "Hours vary" };
+  return { label: "Open Daily", range: `${to12hCompact(start)} - ${to12hCompact(end)}` };
 }
 
 export default function ShowParkingSpaceDetails() {
@@ -102,16 +120,17 @@ export default function ShowParkingSpaceDetails() {
 
   if (!space) {
     return (
-      <View style={styles.center}>
+      <SafeAreaView style={[styles.safe, styles.center]}>
+        <StatusBar barStyle="light-content" backgroundColor={BLUE} />
         <Text style={{ color: "#b91c1c", fontWeight: "600" }}>Space not found.</Text>
         <TouchableOpacity onPress={() => router.back()} style={[styles.btn, { marginTop: 14 }]}>
           <Text style={styles.btnText}>Go Back</Text>
         </TouchableOpacity>
-      </View>
+      </SafeAreaView>
     );
   }
 
-  const title = space.location_label || space.address || space.name;
+  const title = space.name || space.location_label || space.address || "Parking Space";
   const { label, range } = computeDailyWindow(space.availability);
 
   const AVAILABLE_KINDS: VehicleKind[] = useMemo(
@@ -125,7 +144,9 @@ export default function ShowParkingSpaceDetails() {
       try {
         const res = await fetch(`${VEHICLES_API}?action=status&space_id=${space.id}`);
         const j = await res.json();
-        if (j?.success && j.occupied_counts) setOccupied((prev) => ({ ...prev, ...j.occupied_counts }));
+        if (j?.success && j.occupied_counts) {
+          setOccupied((prev) => ({ ...prev, ...j.occupied_counts }));
+        }
       } catch {/* ignore */ }
     })();
   }, [space.id]);
@@ -136,13 +157,6 @@ export default function ShowParkingSpaceDetails() {
       if (!category && AVAILABLE_KINDS.length) setCategory(AVAILABLE_KINDS[0]);
     }
   }, [showIn, AVAILABLE_KINDS, category]);
-
-  // build grid (non-zero categories only)
-  const gridItems: Array<{ kind: VehicleKind; idx: number; tick: boolean }> = [];
-  AVAILABLE_KINDS.forEach((k) => {
-    const total = Number(space.vehicle_counts[k] ?? 0);
-    for (let i = 0; i < total; i++) gridItems.push({ kind: k, idx: i, tick: i < (occupied[k] || 0) });
-  });
 
   // ===== IN handlers =====
   const phoneDigits = phone.replace(/\D/g, "");
@@ -236,7 +250,7 @@ export default function ShowParkingSpaceDetails() {
         space_id: space.id,
         vehicle_no: outVehNo.trim(),
         category: outVerified.category,
-        start_time: outVerified.start_time, // ISO from DB
+        start_time: outVerified.start_time,
         end_time: new Date().toISOString(),
       };
       setShowOut(false);
@@ -252,76 +266,145 @@ export default function ShowParkingSpaceDetails() {
     }
   };
 
+  /* ===== Derived / layout helpers ===== */
+  const titleLine = (space.location_label || space.address || "").trim();
+
   return (
-    <>
+    <SafeAreaView style={styles.safe}>
       <Stack.Screen options={{ headerShown: false }} />
+      <StatusBar barStyle="light-content" backgroundColor={BLUE} />
 
       {/* App Bar */}
       <View style={styles.appbar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.appbarBtn}>
-          <Ionicons name="arrow-back" size={22} color="#fff" />
+        <TouchableOpacity onPress={() => router.back()} style={styles.appbarBtn} hitSlop={10}>
+          <Ionicons name="chevron-back" size={22} color="#fff" />
         </TouchableOpacity>
         <Text numberOfLines={1} style={styles.appbarTitle}>{title}</Text>
-        <TouchableOpacity style={styles.appbarBtn}>
-          <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+        <View style={styles.appbarBtn} />
+      </View>
+
+      {/* Footer actions */}
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={[styles.actionBtn, { backgroundColor: BLUE }]}
+          onPress={() => setShowIn(true)}
+          activeOpacity={0.9}
+        >
+          <Ionicons name="log-in-outline" size={18} color="#fff" />
+          <Text style={styles.actionText}>Vehicle In</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionBtn, { backgroundColor: TEXT }]}
+          onPress={() => setShowOut(true)}
+          activeOpacity={0.9}
+        >
+          <Ionicons name="log-out-outline" size={18} color="#fff" />
+          <Text style={styles.actionText}>Vehicle Out</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 28 }}>
-        {/* Banner */}
-        <View style={styles.bannerWrap}>
-          <Text style={styles.bannerTop}>{label}</Text>
-          <Text style={styles.bannerBottom}>{range}</Text>
+        {/* Summary Card */}
+        <View style={styles.summaryCard}>
+          {titleLine ? (
+            <View style={styles.row}>
+              <Ionicons name="location-outline" size={16} color={BLUE} />
+              <Text style={styles.mutedText} numberOfLines={2}>{titleLine}</Text>
+            </View>
+          ) : null}
+
+          <View style={[styles.rowBetween, { marginTop: 10 }]}>
+            <View style={[styles.badgeSoft]}>
+              <Ionicons name="time-outline" size={14} color={TEXT} />
+              <Text style={styles.badgeText}>{label}</Text>
+            </View>
+            <Text style={styles.rangeText}>{range}</Text>
+          </View>
+
+          <View style={styles.priceRow}>
+            <View style={[styles.pricePill, space.is_free ? styles.priceFree : styles.pricePaid]}>
+              <Ionicons name={space.is_free ? "gift-outline" : "cash-outline"} size={14} color="#fff" />
+              <Text style={styles.pricePillText}>
+                {space.is_free
+                  ? "Free"
+                  : space.pricing_text ||
+                    (space.price_amount != null && space.price_unit
+                      ? `Rs ${space.price_amount} / ${space.price_unit}`
+                      : "Paid")}
+              </Text>
+            </View>
+          </View>
         </View>
 
-        {/* Category pills */}
-        <View style={styles.pillRow}>
+        {/* Category Overview (pills) */}
+        <View style={styles.pillsRow}>
           {ORDER.filter((k) => Number(space.vehicle_counts[k] ?? 0) > 0).map((k) => {
             const meta = ICON_META[k];
             const cap = Number(space.vehicle_counts[k] ?? 0);
             const occ = occupied[k] || 0;
             return (
-              <View key={k} style={styles.pill}>
-                <Ionicons name={meta.icon} size={16} color={meta.color} />
-                <Text style={styles.pillText}>
-                  {meta.label} <Text style={styles.pillCount}>{occ}/{cap}</Text>
+              <View key={k} style={[styles.catPill, { backgroundColor: meta.chipBg, borderColor: meta.chipBorder }]}>
+                <Ionicons name={meta.icon} size={15} color={meta.color} />
+                <Text style={styles.catPillText}>
+                  {meta.label} <Text style={styles.boldCount}>{occ}/{cap}</Text>
                 </Text>
               </View>
             );
           })}
         </View>
 
-        {/* Grid with ticks */}
-        <View style={styles.grid}>
-          {ORDER.filter((k) => Number(space.vehicle_counts[k] ?? 0) > 0).flatMap((k) => {
-            const total = Number(space.vehicle_counts[k] ?? 0);
-            const occ = occupied[k] || 0;
-            const meta = ICON_META[k];
-            return Array.from({ length: total }).map((_, i) => (
-              <View key={`${k}-${i}`} style={styles.cell}>
-                <Ionicons name={meta.icon} size={30} color="#111827" />
-                {i < occ && (
-                  <View style={styles.fullTick}>
-                    <Ionicons name="checkmark" size={36} color="#fff" />
-                  </View>
-                )}
-              </View>
-            ));
-          })}
-        </View>
+        {/* Category Sections with Grids */}
+        {ORDER.filter((k) => Number(space.vehicle_counts[k] ?? 0) > 0).map((k) => {
+          const cap = Number(space.vehicle_counts[k] ?? 0);
+          const occ = occupied[k] || 0;
+          const meta = ICON_META[k];
 
-        {/* Footer actions */}
-        <View style={styles.footer}>
-          <TouchableOpacity style={[styles.actionBtn, { marginRight: 12 }]} onPress={() => setShowIn(true)}>
-            <Text style={styles.actionText}>In</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setShowOut(true)}>
-            <Text style={styles.actionText}>Out</Text>
-          </TouchableOpacity>
-        </View>
+          return (
+            <View key={k} style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.row}>
+                  <View style={[styles.sectionIconWrap, { borderColor: meta.chipBorder, backgroundColor: meta.chipBg }]}>
+                    <Ionicons name={meta.icon} size={18} color={meta.color} />
+                  </View>
+                  <Text style={styles.sectionTitle}>{meta.label}</Text>
+                </View>
+                <View style={[styles.countPill, occ < cap ? styles.countOk : styles.countFull]}>
+                  <Ionicons name="albums-outline" size={12} color="#fff" />
+                  <Text style={styles.countPillText}>
+                    {occ}/{cap} occupied
+                  </Text>
+                </View>
+              </View>
+
+              {/* Grid */}
+              <View style={styles.grid}>
+                {Array.from({ length: cap }).map((_, i) => {
+                  const taken = i < occ;
+                  return (
+                    <View
+                      key={`${k}-${i}`}
+                      style={[
+                        styles.cell,
+                        { borderColor: meta.chipBorder },
+                        taken ? styles.cellTaken : styles.cellFree,
+                      ]}
+                    >
+                      <Ionicons name={meta.icon} size={22} color={taken ? "#fff" : TEXT} />
+                      {taken && (
+                        <View style={styles.tickOverlay}>
+                          <Ionicons name="checkmark" size={26} color="#fff" />
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
       </ScrollView>
 
-      {/* IN MODAL */}
+      {/* IN MODAL (NOW SCROLLABLE) */}
       <Modal visible={showIn} transparent animationType="fade" onRequestClose={() => setShowIn(false)}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -330,21 +413,29 @@ export default function ShowParkingSpaceDetails() {
         >
           <Pressable style={styles.backdrop} onPress={() => { Keyboard.dismiss(); setShowIn(false); }} />
           <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 14 }}
+              showsVerticalScrollIndicator={false}
+            >
               <Text style={styles.modalTitle}>Vehicle In</Text>
 
+              {/* Vehicle no */}
               <View style={styles.inputWrap}>
+                <Text style={styles.label}>Vehicle No</Text>
                 <TextInput
                   value={vehNo}
                   onChangeText={setVehNo}
-                  placeholder="Vehicle No"
+                  placeholder="e.g., ABC-1234"
                   placeholderTextColor="#9CA3AF"
                   style={[styles.input, vehNo ? null : styles.inputError]}
                   autoCapitalize="characters"
+                  returnKeyType="next"
                 />
               </View>
 
-              <Text style={styles.groupLabel}>Select Category</Text>
+              {/* Category quick select */}
+              <Text style={[styles.groupLabel, { marginTop: 12 }]}>Select Category</Text>
               <View style={styles.catRowGrid}>
                 {ORDER.filter((k) => Number(space.vehicle_counts[k] ?? 0) > 0).map((k) => {
                   const meta = ICON_META[k];
@@ -353,9 +444,9 @@ export default function ShowParkingSpaceDetails() {
                     <Pressable
                       key={k}
                       onPress={() => setCategory(k)}
-                      style={[styles.catCard, active ? styles.catCardActive : null]}
+                      style={[styles.catCard, active ? styles.catCardActive : null, { borderColor: meta.chipBorder }]}
                     >
-                      <View style={[styles.catIconWrap, { backgroundColor: meta.bg }]}>
+                      <View style={[styles.catIconWrap, { backgroundColor: meta.chipBg }]}>
                         <Ionicons name={meta.icon} size={22} color={meta.color} />
                       </View>
                       <Text style={[styles.catLabel, active ? styles.catLabelActive : null]}>{meta.label}</Text>
@@ -364,39 +455,45 @@ export default function ShowParkingSpaceDetails() {
                 })}
               </View>
 
+              {/* Phone */}
               <View style={styles.inputWrap}>
+                <Text style={styles.label}>Phone No</Text>
                 <TextInput
                   value={phone}
                   onChangeText={setPhone}
-                  placeholder="Phone No"
+                  placeholder="07x xxxxxx"
                   placeholderTextColor="#9CA3AF"
                   keyboardType="phone-pad"
                   style={[
                     styles.input,
                     phone.replace(/\D/g, "").length >= 9 ? null : styles.inputError,
                   ]}
+                  returnKeyType="done"
                 />
               </View>
 
-              <View style={[styles.inputWrap, { opacity: 0.95 }]}>
+              {/* Start time (display) */}
+              <View style={styles.inputWrap}>
+                <Text style={styles.label}>Start Time</Text>
                 <View style={[styles.input, { justifyContent: "center" }]}>
-                  <Text style={styles.startTimeText}>{startTime}</Text>
+                  <Text style={styles.timeStrong}>{startTime}</Text>
                 </View>
               </View>
 
               <TouchableOpacity
-                style={[styles.enterBtn, canSubmitIn ? null : { backgroundColor: "#93C5FD" }]}
+                style={[styles.primaryBtn, { marginTop: 14 }, !canSubmitIn && { opacity: 0.7 }]}
                 onPress={onEnterIn}
                 disabled={!canSubmitIn}
+                activeOpacity={0.9}
               >
-                <Text style={styles.enterText}>{saving ? "Saving..." : "Enter"}</Text>
+                <Text style={styles.primaryBtnText}>{saving ? "Saving..." : "Enter"}</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* OUT MODAL */}
+      {/* OUT MODAL (also scrollable for consistency) */}
       <Modal visible={showOut} transparent animationType="fade" onRequestClose={() => setShowOut(false)}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -405,136 +502,247 @@ export default function ShowParkingSpaceDetails() {
         >
           <Pressable style={styles.backdrop} onPress={() => { Keyboard.dismiss(); setShowOut(false); }} />
           <View style={styles.modalCard}>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 14 }}
+              showsVerticalScrollIndicator={false}
+            >
               <Text style={styles.modalTitle}>Vehicle Out</Text>
 
-              {/* Vehicle No + Verify on one line */}
-              <View style={[styles.inputWrap, styles.row]}>
-                <TextInput
-                  style={[
-                    styles.input,
-                    { flex: 1, marginRight: 10 },
-                    outVerified ? { opacity: 0.6 } : null,
-                  ]}
-                  placeholder="Vehicle No"
-                  placeholderTextColor="#9CA3AF"
-                  value={outVehNo}
-                  onChangeText={(t) => { setOutVehNo(t); setOutVerified(null); }}
-                  autoCapitalize="characters"
-                  editable={!outVerified}
-                  returnKeyType="done"
-                  onSubmitEditing={Keyboard.dismiss}
-                />
-                <TouchableOpacity
-                  onPress={onVerifyOut}
-                  disabled={verifyDisabled}
-                  style={[
-                    styles.verifyBtn,
-                    verifyDisabled ? { backgroundColor: "#BFDBFE" } : null,
-                  ]}
-                >
-                  <Text style={styles.verifyText}>
-                    {outVerified ? "OK" : (outVerifying ? "..." : "Verify")}
-                  </Text>
-                </TouchableOpacity>
+              {/* Vehicle No + Verify */}
+              <View style={styles.inputWrap}>
+                <Text style={styles.label}>Vehicle No</Text>
+                <View style={[styles.row, { alignItems: "center" }]}>
+                  <TextInput
+                    style={[styles.input, { flex: 1, marginRight: 10 }, outVerified ? { opacity: 0.6 } : null]}
+                    placeholder="e.g., ABC-1234"
+                    placeholderTextColor="#9CA3AF"
+                    value={outVehNo}
+                    onChangeText={(t) => { setOutVehNo(t); setOutVerified(null); }}
+                    autoCapitalize="characters"
+                    editable={!outVerified}
+                    returnKeyType="done"
+                  />
+                  <TouchableOpacity
+                    onPress={onVerifyOut}
+                    disabled={verifyDisabled}
+                    style={[styles.secondaryBtn, verifyDisabled && { opacity: 0.6 }]}
+                    activeOpacity={0.9}
+                  >
+                    <Text style={styles.secondaryBtnText}>
+                      {outVerified ? "OK" : (outVerifying ? "..." : "Verify")}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              {/* Start / End time */}
+              {/* Times */}
               <View style={styles.inputWrap}>
+                <Text style={styles.labelMuted}>Start Time</Text>
                 <View style={[styles.input, { justifyContent: "center" }]}>
-                  <Text style={styles.labelMuted}>Start Time</Text>
                   <Text style={styles.timeValue}>
                     {outVerified ? new Date(outVerified.start_time).toLocaleString() : "—"}
                   </Text>
                 </View>
               </View>
               <View style={styles.inputWrap}>
+                <Text style={styles.labelMuted}>End Time</Text>
                 <View style={[styles.input, { justifyContent: "center" }]}>
-                  <Text style={styles.labelMuted}>End Time</Text>
-                  <Text style={styles.timeValue}>{outEndTime}</Text>
+                  <Text style={styles.timeStrong}>{outEndTime}</Text>
                 </View>
               </View>
 
               <TouchableOpacity
-                style={[styles.enterBtn, canSubmitOut ? null : { backgroundColor: "#93C5FD" }]}
+                style={[styles.primaryBtn, { marginTop: 14 }, !canSubmitOut && { opacity: 0.7 }]}
                 onPress={onEnterOut}
                 disabled={!canSubmitOut}
+                activeOpacity={0.9}
               >
-                <Text style={styles.enterText}>{outSaving ? "Processing..." : "Enter"}</Text>
+                <Text style={styles.primaryBtnText}>{outSaving ? "Processing..." : "Enter"}</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </>
+    </SafeAreaView>
   );
 }
 
 /* ===== layout ===== */
 const WIDTH = Dimensions.get("window").width;
-const COLS = 3, GRID_GAP = 10;
-const CELL = Math.floor((WIDTH - 32 - GRID_GAP * (COLS - 1)) / COLS);
+const COLS = 4;
+const GAP = 10;
+const CELL = Math.floor((WIDTH - 32 - GAP * (COLS - 1)) / COLS);
 
 /* ===== styles ===== */
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  safe: { flex: 1, backgroundColor: BG },
+  center: { alignItems: "center", justifyContent: "center" },
 
-  appbar: {marginTop:35, backgroundColor: "#3B82F6", height: 56, flexDirection: "row", alignItems: "center", paddingHorizontal: 8 },
-  appbarBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  appbarTitle: { flex: 1, color: "#fff", fontSize: 18, fontWeight: "800", paddingHorizontal: 6 },
+  /* Appbar */
+  appbar: {
+    backgroundColor: BLUE,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  appbarBtn: {
+    width: 40, height: 40, borderRadius: 12,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.15)",
+  },
+  appbarTitle: {
+    flex: 1, color: "#fff", fontSize: 18, fontWeight: "800", paddingHorizontal: 8,
+  },
 
-  bannerWrap: { backgroundColor: "#FDE6D8", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16, alignItems: "center", marginTop: 12, marginBottom: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: "#FCD5BF" },
-  bannerTop: { color: "#9A3412", fontWeight: "800", fontSize: 13 },
-  bannerBottom: { color: "#7C2D12", fontWeight: "900", fontSize: 16, marginTop: 2 },
+  /* Cards & text */
+  summaryCard: {
+    backgroundColor: SURFACE,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  row: { flexDirection: "row", alignItems: "center", gap: 8 },
+  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  mutedText: { color: MUTED, fontSize: 13, flex: 1 },
+  badgeSoft: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#f3f4f6",
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 999,
+  },
+  badgeText: { color: TEXT, fontWeight: "700", fontSize: 12 },
+  rangeText: { color: TEXT, fontWeight: "800" },
 
-  pillRow: { flexDirection: "row", flexWrap: "wrap", marginBottom: 14 },
-  pill: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, backgroundColor: "#F3F4F6", borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB", marginRight: 8, marginBottom: 8 },
-  pillText: { fontSize: 13, color: "#111827" },
-  pillCount: { fontWeight: "900" },
+  priceRow: { marginTop: 12, flexDirection: "row" },
+  pricePill: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
+  },
+  priceFree: { backgroundColor: "#10b981" },
+  pricePaid: { backgroundColor: "#111827" },
+  pricePillText: { color: "#fff", fontWeight: "900" },
 
-  grid: { flexDirection: "row", flexWrap: "wrap", marginRight: -GRID_GAP, marginBottom: -GRID_GAP },
-  cell: { width: CELL, height: CELL, borderWidth: 1, borderColor: "#E5E7EB", borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", position: "relative", overflow: "hidden", marginRight: GRID_GAP, marginBottom: GRID_GAP },
-  fullTick: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(34,197,94,0.9)", alignItems: "center", justifyContent: "center" },
+  /* Overview pills */
+  pillsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12, marginBottom: 6 },
+  catPill: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 999,
+  },
+  catPillText: { color: TEXT, fontWeight: "700", fontSize: 12 },
+  boldCount: { fontWeight: "900" },
 
-  footer: { marginTop: 22, flexDirection: "row", justifyContent: "space-between" },
-  actionBtn: { flex: 1, backgroundColor: "#3B82F6", paddingVertical: 12, borderRadius: 12, alignItems: "center" },
-  actionText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  /* Category sections */
+  sectionCard: {
+    backgroundColor: SURFACE,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: BORDER,
+    marginTop: 12,
+  },
+  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  sectionIconWrap: {
+    height: 38, width: 38, borderRadius: 12,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1,
+  },
+  sectionTitle: { color: TEXT, fontWeight: "800", fontSize: 16, marginLeft: 10 },
 
-  btn: { backgroundColor: "#3B82F6", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+  countPill: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+  },
+  countOk: { backgroundColor: "#10b981" },
+  countFull: { backgroundColor: "#ef4444" },
+  countPillText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+
+  /* Grid */
+  grid: {
+    flexDirection: "row", flexWrap: "wrap",
+    marginRight: -GAP, marginBottom: -GAP,
+  },
+  cell: {
+    width: CELL, height: CELL,
+    borderWidth: 1, borderRadius: 12,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "#fff",
+    marginRight: GAP, marginBottom: GAP,
+    overflow: "hidden",
+  },
+  cellFree: { backgroundColor: "#ffffff" },
+  cellTaken: { backgroundColor: BLUE, borderColor: BLUE },
+  tickOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.1)",
+    alignItems: "center", justifyContent: "center",
+  },
+
+  /* Footer actions */
+  footer: { marginTop: 20, flexDirection: "row", gap: 12, paddingHorizontal: 16, paddingBottom: 8 },
+  actionBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  actionText: { color: "#fff", fontWeight: "900" },
+
+  /* Generic button */
+  btn: { backgroundColor: BLUE, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
   btnText: { color: "#fff", fontWeight: "700" },
 
-  // Modal
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.25)" },
-  modalCard: { position: "absolute", left: 16, right: 16, top: 90, backgroundColor: "#F3F4F6", borderRadius: 18, padding: 16, maxHeight: "85%" },
-  modalTitle: { fontSize: 18, fontWeight: "800", color: "#111827", marginBottom: 10 },
+  /* Modal base */
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
+  modalCard: {
+    position: "absolute", left: 16, right: 16, top: 80,
+    backgroundColor: SURFACE, borderRadius: 18, padding: 16, maxHeight: "85%",
+    borderWidth: 1, borderColor: BORDER,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: TEXT, marginBottom: 8 },
 
   inputWrap: { marginTop: 10 },
-  input: { backgroundColor: "#fff", borderRadius: 18, paddingHorizontal: 16, height: 50, borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB", color: "#111827" },
-  inputError: { borderColor: "#EF4444" },
+  label: { color: TEXT, fontWeight: "800", marginBottom: 6 },
+  input: {
+    backgroundColor: "#fff", borderRadius: 14, paddingHorizontal: 14, height: 48,
+    borderWidth: 1, borderColor: BORDER, color: TEXT,
+  },
+  inputError: { borderColor: "#ef4444" },
 
-  // Category 2×2 (IN modal)
-  groupLabel: { marginTop: 12, marginBottom: 8, color: "#111827", fontWeight: "800", fontSize: 16 },
+  groupLabel: { color: TEXT, fontWeight: "800", fontSize: 16 },
   catRowGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  catCard: { width: "48%", backgroundColor: "#fff", borderRadius: 16, paddingVertical: 14, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB", marginBottom: 12 },
-  catCardActive: { borderColor: "#3B82F6", borderWidth: 2, backgroundColor: "#EEF2FF" },
-  catIconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", marginBottom: 8 },
-  catLabel: { fontSize: 14, color: "#111827", fontWeight: "700", textAlign: "center" },
-  catLabelActive: { color: "#1D4ED8" },
+  catCard: {
+    width: "48%", backgroundColor: "#fff", borderRadius: 14, paddingVertical: 14,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: BORDER, marginTop: 10,
+  },
+  catCardActive: { backgroundColor: "#eef7ff", borderColor: BLUE },
+  catIconWrap: {
+    width: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center", marginBottom: 8,
+  },
+  catLabel: { fontSize: 14, color: TEXT, fontWeight: "700", textAlign: "center" },
+  catLabelActive: { color: BLUE },
 
-  // OUT modal extras
-  row: { flexDirection: "row", alignItems: "center" },
-  verifyBtn: { backgroundColor: "#3B82F6", height: 50, paddingHorizontal: 16, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  verifyText: { color: "#fff", fontWeight: "900" },
-  labelMuted: { color: "#6B7280", fontSize: 12, marginBottom: 2 },
-  timeValue: { color: "#111827", fontWeight: "800" },
+  labelMuted: { color: MUTED, fontSize: 12, marginBottom: 6 },
+  timeValue: { color: TEXT, fontWeight: "700" },
+  timeStrong: { color: TEXT, fontWeight: "900", textAlign: "center" },
 
-  startTimeText: {
-  color: "#111827",
-  fontWeight: "800",
-  textAlign: "center",
-},
+  primaryBtn: {
+    backgroundColor: BLUE, height: 48, borderRadius: 12,
+    alignItems: "center", justifyContent: "center",
+  },
+  primaryBtnText: { color: "#fff", fontWeight: "900" },
 
-
-  enterBtn: { alignSelf: "flex-end", marginTop: 14, backgroundColor: "#3B82F6", paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12 },
-  enterText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  secondaryBtn: {
+    backgroundColor: TEXT, height: 48, borderRadius: 12,
+    alignItems: "center", justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  secondaryBtnText: { color: "#fff", fontWeight: "900" },
 });

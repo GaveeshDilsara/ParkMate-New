@@ -3,11 +3,12 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import * as Location from "expo-location";
-import { Stack, router } from "expo-router";
+import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Linking,
   Platform,
   Pressable,
@@ -25,8 +26,24 @@ type DaySlot = { day: string; enabled: boolean; startTime: string; endTime: stri
 type PricingUnit = "hour" | "day";
 type VehicleType = "Cars" | "Vans" | "Bikes" | "Buses";
 
-const STORAGE_KEY = "pm_timeSlots";       // temp availability handoff from SetTimeSlots
-const DRAFT_KEY = "pm_space_draft";       // draft autosave key
+/** THEME */
+const palette = {
+  bg: "#F5F6FA",
+  surface: "#FFFFFF",
+  border: "#E5E7EB",
+  text: "#0F172A",
+  muted: "#6B7280",
+  primary: "#0099ff",    // theme blue
+  primaryDark: "#007ddd",
+  header: "#0099ff",
+  pillBg: "#F2F4F7",
+  verify: "#0EA5E9",
+  verifyDisabled: "#9ecff0",
+  verified: "#10B981",
+};
+
+const STORAGE_KEY = "pm_timeSlots"; // temp availability handoff from SetTimeSlots
+const DRAFT_KEY = "pm_space_draft"; // draft autosave key
 
 const to12h = (t: string) => {
   if (!t) return "--:--";
@@ -37,11 +54,9 @@ const to12h = (t: string) => {
 };
 
 export default function RegisterSpace2() {
-  // form state
+  /** -------- form state -------- */
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
-
-  // refs to force focus when tapping container
   const nameRef = useRef<TextInput>(null);
 
   // location
@@ -53,8 +68,8 @@ export default function RegisterSpace2() {
   const [focusName, setFocusName] = useState(false);
   const [focusAddress, setFocusAddress] = useState(false);
 
-  // save debounce timer
-  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // save debounce
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // pricing
   const [pricing, setPricing] = useState("");
@@ -85,13 +100,22 @@ export default function RegisterSpace2() {
   const [enabledSlots, setEnabledSlots] = useState<DaySlot[]>([]);
 
   // API
-  const API_BASE = "http://192.168.8.131/Parkmate"; // ← your LAN/XAMPP path
+  const API_BASE = "http://192.168.8.131/Parkmate"; // ← keep your LAN/XAMPP path
   const SAVE_ENDPOINT = `${API_BASE}/save_space_details.php`;
   const LINK_ENDPOINT = `${API_BASE}/link_agreement_to_owner_space.php`;
 
   const [submitting, setSubmitting] = useState(false);
 
-  // Read temp availability from SetTimeSlots, then CLEAR it so it doesn't stick forever
+  /** -------- disable hardware back (Android) -------- */
+  useFocusEffect(
+    React.useCallback(() => {
+      const onBack = () => true; // block going back
+      const sub = BackHandler.addEventListener("hardwareBackPress", onBack);
+      return () => sub.remove();
+    }, [])
+  );
+
+  /** -------- pull temp availability (then clear) -------- */
   useFocusEffect(
     React.useCallback(() => {
       let mounted = true;
@@ -103,18 +127,15 @@ export default function RegisterSpace2() {
             const slots = JSON.parse(raw) as DaySlot[];
             const enabled = (slots || []).filter(d => d.enabled && d.startTime && d.endTime);
             setEnabledSlots(enabled);
-            // important: clear temp so it only shows once after you set it
             await AsyncStorage.removeItem(STORAGE_KEY);
           }
-        } catch {
-          // ignore, leave whatever was already in state
-        }
+        } catch {}
       })();
       return () => { mounted = false; };
     }, [])
   );
 
-  // Load draft once on mount
+  /** -------- load draft once -------- */
   useEffect(() => {
     (async () => {
       try {
@@ -132,13 +153,11 @@ export default function RegisterSpace2() {
         setVehicleCounts(d.vehicle_counts ?? { Cars: 0, Vans: 0, Bikes: 0, Buses: 0 });
         setEnabledSlots(Array.isArray(d.enabledSlots) ? d.enabledSlots : []);
         setVerifiedOnce(!!(d.location_label || (typeof d.lat === "number" && typeof d.lon === "number")));
-      } catch {
-        // ignore
-      }
+      } catch {}
     })();
   }, []);
 
-  // Autosave draft with a tiny debounce
+  /** -------- autosave (debounced) -------- */
   useEffect(() => {
     const draft = {
       name,
@@ -165,33 +184,21 @@ export default function RegisterSpace2() {
     vehicleCounts, enabledSlots
   ]);
 
-  // derive pricing preview
+  /** -------- derive pricing preview -------- */
   useEffect(() => {
     if (isFree) setPricing("Free");
     else if (pricingAmount) setPricing(`Rs ${pricingAmount} / ${pricingUnit}`);
     else setPricing("");
   }, [isFree, pricingAmount, pricingUnit]);
 
+  /** -------- submit -------- */
   const onSubmit = async () => {
-    if (!agree) {
-      Alert.alert("Please agree", "You must accept the terms before submitting.");
-      return;
-    }
-    if (!name.trim()) {
-      Alert.alert("Missing", "Enter the parking space name.");
-      return;
-    }
-    if (!address.trim()) {
-      Alert.alert("Missing", "Enter the exact address.");
-      return;
-    }
+    if (!agree) return Alert.alert("Please agree", "You must accept the terms before submitting.");
+    if (!name.trim()) return Alert.alert("Missing", "Enter the parking space name.");
+    if (!address.trim()) return Alert.alert("Missing", "Enter the exact address.");
 
-    // Build availability payload (enabled slots only)
-    const availability = enabledSlots.map((d) => ({
-      day: d.day,
-      start: d.startTime,
-      end: d.endTime,
-    }));
+    // enabled availability only
+    const availability = enabledSlots.map(d => ({ day: d.day, start: d.startTime, end: d.endTime }));
 
     const price_amount = isFree ? null : (pricingAmount ? parseInt(pricingAmount, 10) : null);
     const price_unit: PricingUnit | null = isFree ? null : pricingUnit;
@@ -205,13 +212,10 @@ export default function RegisterSpace2() {
       name: name.trim(),
       address: address.trim(),
       location_label: locationLabel || null,
-      // send as strings so PHP can NULLIF('', '') → NULL for empty coords
       latitude: lat != null ? String(lat) : "",
       longitude: lon != null ? String(lon) : "",
-
-      availability,                  // array → PHP json_encode
-      vehicle_counts: vehicleCounts, // object → PHP json_encode
-
+      availability,
+      vehicle_counts: vehicleCounts,
       is_free: isFree ? 1 : 0,
       price_amount,
       price_unit,
@@ -225,15 +229,13 @@ export default function RegisterSpace2() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const json = await res.json();
 
-      const json = await res.json(); // ← you were missing this line
       if (json?.success) {
         const spaceId = String(json.id);
-
-        // remember space id if you like (used by ParkingAgreementScreen)
         await AsyncStorage.setItem("pm_last_space_id", spaceId);
 
-        // link any pending agreement (created earlier before owner/space)
+        // link pending agreement if any
         const pending = await AsyncStorage.getItem("pm_pending_agreement_id");
         if (pending) {
           try {
@@ -245,32 +247,24 @@ export default function RegisterSpace2() {
                 space_id: Number(spaceId),
               }),
             });
-          } catch {
-            // ignore link errors; not fatal for space creation
-          }
-          // clear regardless
+          } catch {}
           await AsyncStorage.removeItem("pm_pending_agreement_id");
         }
 
-        // clear draft + temp time-slots so the next open is fresh
         await AsyncStorage.multiRemove([DRAFT_KEY, STORAGE_KEY]);
-
-        // go to next page
         router.replace({ pathname: "/AfterSubmitting", params: { space_id: spaceId } });
         return;
       }
 
       Alert.alert("Save failed", json?.message || "Unknown error from server.");
-    } catch (e) {
-      Alert.alert(
-        "Network error",
-        "Could not reach the server. Check your IP (API_BASE) and XAMPP."
-      );
+    } catch {
+      Alert.alert("Network error", "Could not reach the server. Check your IP (API_BASE) and XAMPP.");
     } finally {
       setSubmitting(false);
     }
   };
 
+  /** -------- address helpers -------- */
   const verifyAddress = async () => {
     const q = address.trim();
     if (!q) return;
@@ -282,9 +276,7 @@ export default function RegisterSpace2() {
         "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&q=" +
         encodeURIComponent(q);
 
-      const res = await fetch(url, {
-        headers: { "User-Agent": "ParkMate-Demo/1.0 (contact@example.com)" },
-      });
+      const res = await fetch(url, { headers: { "User-Agent": "ParkMate-Demo/1.0 (contact@example.com)" } });
       const data = await res.json();
 
       if (Array.isArray(data) && data.length > 0) {
@@ -310,9 +302,7 @@ export default function RegisterSpace2() {
   const setFromCoords = async (latNum: number, lonNum: number) => {
     try {
       const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latNum}&lon=${lonNum}`;
-      const res = await fetch(url, {
-        headers: { "User-Agent": "ParkMate-Demo/1.0 (contact@example.com)" },
-      });
+      const res = await fetch(url, { headers: { "User-Agent": "ParkMate-Demo/1.0 (contact@example.com)" } });
       const data = await res.json();
       const display = String(data.display_name || `${latNum.toFixed(5)}, ${lonNum.toFixed(5)}`);
       setLocationLabel(display);
@@ -320,7 +310,6 @@ export default function RegisterSpace2() {
       setLon(lonNum);
       setVerifiedOnce(true);
     } catch {
-      // fallback to coords only
       setLocationLabel(`${latNum.toFixed(5)}, ${lonNum.toFixed(5)}`);
       setLat(latNum);
       setLon(lonNum);
@@ -333,10 +322,7 @@ export default function RegisterSpace2() {
       setLocating(true);
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert(
-          "Permission required",
-          "We need location permission to use your current position."
-        );
+        Alert.alert("Permission required", "We need location permission to use your current position.");
         return;
       }
       const pos = await Location.getCurrentPositionAsync({
@@ -357,50 +343,54 @@ export default function RegisterSpace2() {
     }
     const label = encodeURIComponent(locationLabel || "Selected location");
     if (Platform.OS === "ios") {
-      const url = `http://maps.apple.com/?ll=${lat},${lon}&q=${label}`;
-      Linking.openURL(url);
+      Linking.openURL(`http://maps.apple.com/?ll=${lat},${lon}&q=${label}`);
     } else {
-      const url = `geo:${lat},${lon}?q=${lat},${lon}(${label})`;
-      Linking.openURL(url);
+      Linking.openURL(`geo:${lat},${lon}?q=${lat},${lon}(${label})`);
     }
   };
 
-  // pricing helpers
+  /** -------- pricing helpers -------- */
   const addStep = (step: number) => {
     const n = Number(pricingAmount || 0) + step;
     setPricingAmount(String(Math.max(0, Math.floor(n))));
   };
   const onChangeAmount = (txt: string) => setPricingAmount(txt.replace(/[^\d]/g, ""));
 
-  // vehicle helpers
+  /** -------- vehicle helpers -------- */
   const selectedVehicles = () =>
     (["Cars", "Vans", "Bikes", "Buses"] as const)
       .map((k) => ({ k, v: vehicleCounts[k] || 0 }))
       .filter((x) => x.v > 0);
 
   const openCategory = () => {
-    prevCountsRef.current = vehicleCounts; // snapshot
+    prevCountsRef.current = vehicleCounts;
     setShowCategory(true);
   };
   const cancelCategory = () => {
-    setVehicleCounts(prevCountsRef.current); // revert
+    setVehicleCounts(prevCountsRef.current);
     setShowCategory(false);
   };
   const saveCategory = () => setShowCategory(false);
 
+  /** -------- UI -------- */
   return (
     <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle="light-content" backgroundColor={palette.header} />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={20} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Parking Space Details</Text>
-        <View style={{ width: 36 }} />
+      {/* Minimal App Bar (no back; step pill) */}
+      <View style={styles.appbar}>
+        <View style={{ width: 36, height: 36 }} />{/* spacer (no back) */}
+        <View style={styles.appbarCenter}>
+          <Text style={styles.appbarTitle}>Parking Space Details</Text>
+          <Text style={styles.appbarSub}>Step 2/2</Text>
+        </View>
+        <View style={styles.stepPill}>
+          <Text style={styles.stepText}>2 / 2</Text>
+        </View>
       </View>
+
+      {/* progress */}
+      <View style={styles.progressTrack}><View style={[styles.progressFill, { width: "100%" }]} /></View>
 
       <ScrollView
         contentContainerStyle={styles.container}
@@ -534,12 +524,7 @@ export default function RegisterSpace2() {
                 <ActivityIndicator size="small" />
               ) : (
                 <>
-                  <Ionicons
-                    name="navigate-outline"
-                    size={16}
-                    color="#0F172A"
-                    style={{ marginRight: 6 }}
-                  />
+                  <Ionicons name="navigate-outline" size={16} color={palette.text} style={{ marginRight: 6 }} />
                   <Text style={styles.locateText}>Use my location</Text>
                 </>
               )}
@@ -787,29 +772,17 @@ export default function RegisterSpace2() {
             <Text style={styles.submitText}>Submit for Approval</Text>
           )}
         </TouchableOpacity>
-
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 /* ---------- Styles ---------- */
-const palette = {
-  bg: "#F5F6FA",
-  pillBg: "#F2F4F7",
-  border: "#E5E7EB",
-  text: "#0F172A",
-  primary: "#2F80ED",
-  header: "#39A1E1",
-  verify: "#0EA5E9",
-  verifyDisabled: "#9ecff0",
-  verified: "#10B981",
-};
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.bg },
 
-  header: {
+  /* App bar */
+  appbar: {
     backgroundColor: palette.header,
     paddingHorizontal: 16,
     paddingTop: Platform.select({ ios: 10, android: 14 }),
@@ -818,36 +791,33 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderBottomLeftRadius: 14,
     borderBottomRightRadius: 14,
-    
   },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 8,
+  appbarCenter: { flex: 1, alignItems: "center" },
+  appbarTitle: { color: "#fff", fontWeight: "800", fontSize: 18 },
+  appbarSub: { color: "#EAF6FF", fontSize: 12, marginTop: 2 },
+  stepPill: {
+    height: 28, minWidth: 52, paddingHorizontal: 10,
+    borderRadius: 999, backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center", justifyContent: "center",
   },
-  headerTitle: { color: "#fff", fontWeight: "800", fontSize: 18 },
+  stepText: { color: "#fff", fontWeight: "700", fontSize: 12 },
+
+  progressTrack: { height: 3, backgroundColor: "#DCE9FF" },
+  progressFill: { height: 3, backgroundColor: "#fff" },
 
   container: { padding: 16 },
 
   /* field cards */
   fieldCard: {
-    backgroundColor: "#fff",
+    backgroundColor: palette.surface,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: palette.border,
     padding: 12,
     marginBottom: 12,
   },
-  labelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  labelText: { color: "#0F172A", fontWeight: "800", fontSize: 13 },
+  labelRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
+  labelText: { color: palette.text, fontWeight: "800", fontSize: 13 },
 
   inputBox: {
     backgroundColor: palette.pillBg,
@@ -861,7 +831,7 @@ const styles = StyleSheet.create({
   },
   inputBoxFocused: {
     borderColor: palette.primary,
-    shadowColor: "#2F80ED",
+    shadowColor: palette.primary,
     shadowOpacity: 0.12,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 8,
@@ -898,7 +868,7 @@ const styles = StyleSheet.create({
   verifiedBtn: { backgroundColor: palette.verified },
   verifyText: { color: "#fff", fontWeight: "800" },
 
-  helpText: { color: "#6B7280", fontSize: 12, marginTop: 8 },
+  helpText: { color: palette.muted, fontSize: 12, marginTop: 8 },
   helpTextSmall: { color: "#9aa0a6", fontSize: 11, marginTop: 8 },
 
   mapBox: {
@@ -912,7 +882,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   mapBoxDisabled: { opacity: 0.7 },
-  mapText: { color: "#0F172A", fontSize: 13, fontWeight: "600" },
+  mapText: { color: palette.text, fontSize: 13, fontWeight: "600" },
   mapPlaceholderText: { color: "#9aa0a6", fontSize: 13, fontStyle: "italic" },
 
   badgeVerified: {
@@ -937,19 +907,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 10,
   },
-  locateText: { color: "#0F172A", fontWeight: "700" },
-
-  /* description pill (kept if needed) */
-  pill: {
-    backgroundColor: palette.pillBg,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  textArea: { color: palette.text, fontSize: 14, minHeight: 90, textAlignVertical: "top" },
+  locateText: { color: palette.text, fontWeight: "700" },
 
   /* Availability chips card */
   availabilityCard: {
@@ -980,7 +938,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
     marginBottom: 8,
   },
-  chipText: { color: "#0F172A", fontWeight: "700", fontSize: 12 },
+  chipText: { color: palette.text, fontWeight: "700", fontSize: 12 },
   emptyAvailBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -991,7 +949,7 @@ const styles = StyleSheet.create({
     borderColor: "#e6eefc",
     backgroundColor: "#ffffff",
   },
-  emptyAvailText: { color: "#6B7280", fontSize: 12, fontStyle: "italic" },
+  emptyAvailText: { color: palette.muted, fontSize: 12, fontStyle: "italic" },
 
   /* Pricing */
   pricingCard: {
@@ -1002,7 +960,7 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 12,
   },
-  sectionTitle: { fontSize: 14, fontWeight: "800", color: "#0F172A" },
+  sectionTitle: { fontSize: 14, fontWeight: "800", color: palette.text },
   freeToggle: {
     flexDirection: "row",
     alignItems: "center",
@@ -1028,47 +986,31 @@ const styles = StyleSheet.create({
   },
   unitBtn: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 999 },
   unitBtnActive: { backgroundColor: palette.primary },
-  unitText: { fontSize: 12, fontWeight: "800", color: "#0F172A" },
+  unitText: { fontSize: 12, fontWeight: "800", color: palette.text },
   unitTextActive: { color: "#fff" },
   amountRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
   currencyPill: {
-    paddingHorizontal: 10,
-    height: 40,
-    borderRadius: 8,
-    backgroundColor: "#f3f8ff",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#cfe4ff",
-    marginRight: 8,
+    paddingHorizontal: 10, height: 40, borderRadius: 8,
+    backgroundColor: "#f3f8ff", justifyContent: "center",
+    borderWidth: 1, borderColor: "#cfe4ff", marginRight: 8,
   },
-  currencyText: { fontWeight: "900", color: "#0F172A" },
+  currencyText: { fontWeight: "900", color: palette.text },
   amountInput: {
-    flex: 1,
-    height: 40,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#cfe4ff",
-    color: palette.text,
-    marginRight: 8,
+    flex: 1, height: 40, paddingHorizontal: 12, borderRadius: 8,
+    backgroundColor: "#fff", borderWidth: 1, borderColor: "#cfe4ff",
+    color: palette.text, marginRight: 8,
   },
   stepBtn: {
-    height: 40,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: "#dff0ff",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#cfe4ff",
-    marginRight: 8,
+    height: 40, paddingHorizontal: 10, borderRadius: 8,
+    backgroundColor: "#dff0ff", justifyContent: "center",
+    borderWidth: 1, borderColor: "#cfe4ff", marginRight: 8,
   },
-  stepBtnText: { fontWeight: "900", color: "#0F172A" },
-  previewText: { marginTop: 6, fontSize: 12, color: "#0F172A", fontWeight: "600" },
+  stepBtnText: { fontWeight: "900", color: palette.text },
+  previewText: { marginTop: 6, fontSize: 12, color: palette.text, fontWeight: "600" },
 
   /* Categories */
   catCard: {
-    backgroundColor: "#fff",
+    backgroundColor: palette.surface,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: palette.border,
@@ -1076,126 +1018,78 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   categoryHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     marginBottom: 8,
   },
 
   summaryBox: {
     backgroundColor: "#f7fbff",
-    borderWidth: 1,
-    borderColor: "#d9e8ff",
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 8,
+    borderWidth: 1, borderColor: "#d9e8ff",
+    borderRadius: 12, padding: 10, marginBottom: 8,
   },
   summaryLine: { color: palette.text, fontWeight: "700", marginBottom: 4 },
   summaryCount: { color: palette.primary, fontWeight: "900" },
-  summaryEmpty: { color: "#6B7280", fontStyle: "italic" },
+  summaryEmpty: { color: palette.muted, fontStyle: "italic" },
 
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
   vehicleCard: {
     width: "48%",
-    borderWidth: 1,
-    borderColor: "#cfe4ff",
+    borderWidth: 1, borderColor: "#cfe4ff",
     backgroundColor: "#ffffff",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
+    borderRadius: 12, padding: 12, marginBottom: 12,
   },
   vehicleTopRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
   iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 32, height: 32, borderRadius: 8,
     backgroundColor: "#f0f7ff",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#cfe4ff",
-    marginRight: 8,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "#cfe4ff", marginRight: 8,
   },
   vehicleName: { fontSize: 14, fontWeight: "800", color: palette.text },
   counterRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   counterBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 36, height: 36, borderRadius: 10,
     backgroundColor: "#e9f3ff",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#cfe4ff",
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "#cfe4ff",
   },
   countBadge: {
-    minWidth: 48,
-    paddingHorizontal: 10,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#cfe4ff",
-    alignItems: "center",
-    justifyContent: "center",
+    minWidth: 48, paddingHorizontal: 10, height: 36,
+    borderRadius: 10, backgroundColor: "#fff",
+    borderWidth: 1, borderColor: "#cfe4ff",
+    alignItems: "center", justifyContent: "center",
   },
-  countText: { fontWeight: "900", color: "#0F172A" },
+  countText: { fontWeight: "900", color: palette.text },
   catFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 6,
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6,
   },
   cancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#d9e8ff",
-    backgroundColor: "#fff",
+    paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10,
+    borderWidth: 1, borderColor: "#d9e8ff", backgroundColor: "#fff",
   },
-  cancelText: { color: "#0F172A", fontWeight: "700" },
+  cancelText: { color: palette.text, fontWeight: "700" },
   saveBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10,
     backgroundColor: palette.primary,
   },
   saveBtnText: { color: "#fff", fontWeight: "800" },
 
-  /* Submit + misc */
+  /* Terms + Submit */
   termsRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 14 },
   checkbox: {
-    width: 16,
-    height: 16,
-    borderWidth: 1,
-    borderColor: "#000",
-    borderRadius: 3,
-    marginRight: 8,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 16, height: 16, borderWidth: 1, borderColor: "#000",
+    borderRadius: 3, marginRight: 8, alignItems: "center", justifyContent: "center",
   },
   termsText: { color: palette.text, fontSize: 12, flex: 1 },
-  legalRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    marginTop: 6,
-    marginBottom: 12,
-  },
+  legalRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", marginTop: 6, marginBottom: 12 },
   legalLabel: { color: palette.text, fontWeight: "800", marginRight: 6 },
-  link: { color: "#2F80ED", fontWeight: "700" },
+  link: { color: palette.primary, fontWeight: "700" },
   submitBtn: {
     backgroundColor: palette.primary,
-    borderRadius: 20,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 8,
-    marginBottom: 24,
+    borderRadius: 20, height: 44,
+    alignItems: "center", justifyContent: "center",
+    marginTop: 8, marginBottom: 24,
   },
   submitText: { color: "#fff", fontWeight: "800" },
 });
